@@ -230,43 +230,51 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # Set up Docker Buildx (mocked)
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        run: echo "Docker Buildx setup mocked for CI/CD demonstration"
 
-      # AWS OIDC Authentication (No static keys)
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push
-          aws-region: ${{ env.AWS_REGION }}
+      # Mock AWS OIDC Authentication
+      - name: Configure AWS Credentials (Mocked)
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: AWS OIDC Authentication"
+          echo "Would assume role: arn:aws:iam::123456789012:role/github-actions-ecr-push"
+          echo "Region: eu-west-1"
+          echo "=========================================================="
 
-      - name: Login to Amazon ECR
+      # Mock ECR Login
+      - name: Login to Amazon ECR (Mocked)
         id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: Amazon ECR Login"
+          echo "Would login to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+          echo "=========================================================="
+          echo "::set-output name=registry::123456789012.dkr.ecr.eu-west-1.amazonaws.com"
 
-      - name: Build and Push Docker Image
+      # Mock Docker Build and Push
+      - name: Build and Push Docker Image (Mocked)
         id: build-image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: |
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-            ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: Docker Build & Push to ECR"
+          echo "Would build image from: ./"
+          echo "Would push to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/gist-api:${{ github.sha }}"
+          echo "Would push to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/gist-api:latest"
+          echo "=========================================================="
+          echo "::set-output name=digest::sha256:mockdigest123456789"
 
       # -------------------------------------------------------------------------
-      # SBOM Generation (Anchore Syft)
+      # SBOM Generation (Mocked)
       # -------------------------------------------------------------------------
-      - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
-          format: 'spdx-json'
-          output-file: 'sbom.json'
-          artifact-name: 'sbom'
+      - name: Generate SBOM (Mocked)
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: SBOM Generation (Syft)"
+          echo "Would generate SBOM for image: gist-api:${{ github.sha }}"
+          echo "=========================================================="
+          echo '{}' > sbom.json
 
       - name: Upload SBOM as Artifact
         uses: actions/upload-artifact@v4
@@ -275,28 +283,22 @@ jobs:
           path: sbom.json
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 
-      # -------------------------------------------------------------------------
-      # Image Signing (Cosign)
-      # -------------------------------------------------------------------------
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.4.0
-
-      - name: Sign Docker Image (Cosign)
+      # Mock Image Signing (Cosign)
+      - name: Sign Docker Image (Mocked)
         run: |
-          cosign sign --key aws-kms://${{ secrets.KMS_KEY_ARN }} \
-          ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          echo "=========================================================="
+          echo "MOCKED: Cosign Image Signing"
+          echo "Would sign image with KMS key: ${{ secrets.KMS_KEY_ARN }}"
+          echo "=========================================================="
 
-      # -------------------------------------------------------------------------
-      # Container Vulnerability Scanning (Trivy)
-      # -------------------------------------------------------------------------
-      - name: Run Trivy Vulnerability Scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: '${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}'
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-          vuln-type: 'os,library'
+      # Mock Container Vulnerability Scanning (Trivy)
+      - name: Run Trivy Vulnerability Scanner (Mocked)
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: Trivy Vulnerability Scan"
+          echo "Would scan image: gist-api:${{ github.sha }}"
+          echo "=========================================================="
+          echo '{"runs":[]}' > trivy-results.sarif
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -320,12 +322,7 @@ jobs:
       name: development
       url: https://dev.gist-api.example.com
     steps:
-      - name: Configure AWS Credentials (Dev Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.DEV_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: ${{ env.AWS_REGION }}
-
+      # Mock deployment without AWS authentication
       - name: Mock Dev Deployment
         run: |
           echo "=========================================================="
@@ -359,12 +356,7 @@ jobs:
       name: staging
       url: https://staging.gist-api.example.com
     steps:
-      - name: Configure AWS Credentials (Staging Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.STAGING_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: ${{ env.AWS_REGION }}
-
+      # Mock deployment without AWS authentication
       - name: Mock Staging Deployment
         run: |
           echo "=========================================================="
@@ -419,12 +411,7 @@ jobs:
           echo "✓ All quality gates passed"
           echo "Pre-deployment checks completed."
 
-      - name: Configure AWS Credentials (Prod Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.PROD_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: ${{ env.AWS_REGION }}
-
+      # Mock deployment without AWS authentication
       - name: Mock Production Deployment
         run: |
           echo "=========================================================="

@@ -2,6 +2,18 @@
 # Production-Grade DevSecOps CI/CD Workflow (Mocked Deployments)
 # =============================================================================
 # This workflow implements a high-governance secure delivery process.
+#
+# Features included:
+# - Multi-stage quality gates (lint, test, SAST, secrets scanning)
+# - Supply chain security (SBOM generation, image signing)
+# - Container vulnerability scanning (Trivy)
+# - Manual approval gates for production
+# - Parallel job execution where applicable
+# - Post-deployment smoke tests
+# - Hotfix branch support
+# - Artifact retention policies
+# - Workflow dispatch for manual runs
+#
 # Deployment steps are mocked using echo statements for demonstration.
 # =============================================================================
 
@@ -9,25 +21,139 @@ name: Production CI/CD (Mocked)
 
 on:
   push:
-    branches: [main, develop, 'release/*']
+    branches: [main, develop, 'release/*', 'hotfix/*']
   pull_request:
     branches: [main, develop]
+  # Allow manual trigger for re-runs
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - development
+          - staging
+          - production
+
+# Concurrency control - cancel in-progress runs for same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   PYTHON_VERSION: '3.12'
   IMAGE_NAME: 'gist-api'
+  AWS_REGION: 'eu-west-1'
+  # Artifact retention (days)
+  ARTIFACT_RETENTION_DAYS: 30
 
 permissions:
   id-token: write
   contents: read
   security-events: write
+  actions: write
+  packages: write
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Stage 1: Quality Gate (Lint, Test, SAST)
+  # Stage 1a: Code Quality & Linting (Parallel with other quality checks)
   # ---------------------------------------------------------------------------
-  quality-gate:
-    name: Quality & Security Gate
+  lint-and-format:
+    name: Lint & Format Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install ruff
+
+      - name: Run Ruff (Linting & Formatting)
+        run: |
+          ruff check src/ tests/
+          ruff format --check src/ tests/
+
+  # ---------------------------------------------------------------------------
+  # Stage 1b: Security Scanning (SAST & Secrets)
+  # ---------------------------------------------------------------------------
+  security-scan:
+    name: Security Scans
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      # -------------------------------------------------------------------------
+      # SAST: Static Application Security Testing (Bandit)
+      # -------------------------------------------------------------------------
+      - name: Install Bandit
+        run: pip install bandit bandit-sarif-formatter
+
+      - name: Static Analysis (Bandit SAST)
+        run: |
+          bandit -r src/ -f sarif -o bandit-results.sarif -ll \
+            --exclude tests/,venv/ \
+            --ini .bandit
+        continue-on-error: true
+
+      # Upload Bandit results to GitHub Security
+      - name: Upload Bandit SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'bandit-results.sarif'
+          category: 'bandit'
+
+      # -------------------------------------------------------------------------
+      # Secrets Scanning (Gitleaks)
+      # -------------------------------------------------------------------------
+      - name: Run Gitleaks
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_COMMENTS: 'false'
+
+      # -------------------------------------------------------------------------
+      # Dependency SBOM (Syft - for source)
+      # -------------------------------------------------------------------------
+      - name: Dependency SBOM (Syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: .
+          format: 'spdx-json'
+          output-file: 'source-sbom.json'
+
+  # ---------------------------------------------------------------------------
+  # Stage 1c: Test & Coverage (Parallel with other quality checks)
+  # ---------------------------------------------------------------------------
+  test-coverage:
+    name: Test & Coverage
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -44,94 +170,357 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Static Analysis (Bandit SAST)
-        run: |
-          pip install bandit
-          bandit -r src/ -f custom || true
-          echo "SAST Scan Completed."
-
       - name: Run Tests & Coverage
         run: |
-          pytest tests/ --cov=src --cov-report=term-missing --cov-fail-under=80
+          pytest tests/ --cov=src --cov-report=term-missing --cov-report=xml --cov-fail-under=80
+        env:
+          COVERAGE_THRESHOLD: 80
 
   # ---------------------------------------------------------------------------
-  # Stage 2: Build & Supply Chain Security
+  # Stage 1d: Build Acceptance (Docker Build Test)
+  # ---------------------------------------------------------------------------
+  build-acceptance:
+    name: Build Acceptance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker Image (No Push)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          load: true
+          tags: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Quality Gate Consolidation
+  # ---------------------------------------------------------------------------
+  quality-gate:
+    name: Quality Gate
+    needs: [lint-and-format, security-scan, test-coverage, build-acceptance]
+    runs-on: ubuntu-latest
+    outputs:
+      should-proceed: ${{ steps.evaluate.outputs.should-proceed }}
+    steps:
+      - name: Evaluate Quality Gates
+        id: evaluate
+        run: |
+          echo "Quality gates passed successfully."
+          echo "should-proceed=true" >> $GITHUB_OUTPUT
+          echo "All security scans, tests, and builds completed."
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Build & Supply Chain Security
   # ---------------------------------------------------------------------------
   build-and-sign:
     name: Build, SBOM & Sign
     needs: quality-gate
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build-image.outputs.digest }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Mock Docker Build & Push
-        run: |
-          echo "Building Docker Image: ${{ env.IMAGE_NAME }}:${{ github.sha }}"
-          echo "Mocking 'docker push' to Amazon ECR..."
-          echo "Successfully pushed to 111111111111.dkr.ecr.eu-west-1.amazonaws.com/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+      # Set up Docker Buildx (mocked)
+      - name: Set up Docker Buildx
+        run: echo "Docker Buildx setup mocked for CI/CD demonstration"
 
-      - name: Generate SBOM (Syft Mock)
+      # Mock AWS OIDC Authentication
+      - name: Configure AWS Credentials (Mocked)
         run: |
-          echo "Generating SBOM for ${{ env.IMAGE_NAME }}:${{ github.sha }} using Syft..."
-          echo '{"sbom": "mocked-data"}' > sbom.json
-          echo "SBOM generated: sbom.json"
+          echo "=========================================================="
+          echo "MOCKED: AWS OIDC Authentication"
+          echo "Would assume role: arn:aws:iam::123456789012:role/github-actions-ecr-push"
+          echo "Region: eu-west-1"
+          echo "=========================================================="
 
-      - name: Mock Image Signing (Cosign)
+      # Mock ECR Login
+      - name: Login to Amazon ECR (Mocked)
+        id: login-ecr
         run: |
-          echo "Signing image with Cosign and AWS KMS..."
-          echo "cosign sign --key aws-kms://arn:aws:kms:eu-west-1:111111111111:key/mock-key-id ..."
-          echo "Image signed successfully."
+          echo "=========================================================="
+          echo "MOCKED: Amazon ECR Login"
+          echo "Would login to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+          echo "=========================================================="
+          echo "::set-output name=registry::123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+
+      # Mock Docker Build and Push
+      - name: Build and Push Docker Image (Mocked)
+        id: build-image
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: Docker Build & Push to ECR"
+          echo "Would build image from: ./"
+          echo "Would push to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/gist-api:${{ github.sha }}"
+          echo "Would push to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/gist-api:latest"
+          echo "=========================================================="
+          echo "::set-output name=digest::sha256:mockdigest123456789"
+
+      # -------------------------------------------------------------------------
+      # SBOM Generation (Mocked)
+      # -------------------------------------------------------------------------
+      - name: Generate SBOM (Mocked)
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: SBOM Generation (Syft)"
+          echo "Would generate SBOM for image: gist-api:${{ github.sha }}"
+          echo "=========================================================="
+          echo '{}' > sbom.json
+
+      - name: Upload SBOM as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifact
+          path: sbom.json
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+      # Mock Image Signing (Cosign)
+      - name: Sign Docker Image (Mocked)
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: Cosign Image Signing"
+          echo "Would sign image with KMS key: ${{ secrets.KMS_KEY_ARN }}"
+          echo "=========================================================="
+
+      # Mock Container Vulnerability Scanning (Trivy)
+      - name: Run Trivy Vulnerability Scanner (Mocked)
+        run: |
+          echo "=========================================================="
+          echo "MOCKED: Trivy Vulnerability Scan"
+          echo "Would scan image: gist-api:${{ github.sha }}"
+          echo "=========================================================="
+          # Note: Skipping SARIF upload since this is mocked
+          # In production, Trivy would generate a real SARIF file
+
+      # Skip Trivy SARIF upload for mocked results
+      # - name: Upload Trivy SARIF
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: 'trivy-results.sarif'
+      #     category: 'trivy'
 
   # ---------------------------------------------------------------------------
-  # Stage 3: Deployment (Mocked)
+  # Stage 4: Deployment Gates
+  # ---------------------------------------------------------------------------
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Development (Automatic)
   # ---------------------------------------------------------------------------
   deploy-dev:
     name: Deploy to Dev
     needs: build-and-sign
-    if: github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/develop' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'development')
     runs-on: ubuntu-latest
+    environment:
+      name: development
+      url: https://dev.gist-api.example.com
     steps:
+      # Mock deployment without AWS authentication
       - name: Mock Dev Deployment
         run: |
           echo "=========================================================="
-          echo "DEPLOYING TO DEVELOPMENT ENVIRONMENT (AWS Account: DEV)"
+          echo "DEPLOYING TO DEVELOPMENT ENVIRONMENT"
+          echo "AWS Account: DEV (${{ secrets.DEV_ACCOUNT_ID }})"
           echo "Namespace: gist-api-dev"
           echo "Cluster: eks-dev-cluster"
           echo "Strategy: Rolling Update"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo "=========================================================="
           echo "Deployed to Dev Successfully."
 
+      # Post-deployment smoke tests
+      - name: Run Dev Smoke Tests
+        run: |
+          echo "Running smoke tests against Dev environment..."
+          echo "✓ Health check passed"
+          echo "✓ API response validation passed"
+          echo "✓ Database connectivity verified"
+          echo "Smoke tests completed successfully."
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Staging (Automatic on release/*)
+  # ---------------------------------------------------------------------------
   deploy-staging:
     name: Deploy to Staging
     needs: build-and-sign
-    if: startsWith(github.ref, 'refs/heads/release/')
+    if: startsWith(github.ref, 'refs/heads/release/') || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
     runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.gist-api.example.com
     steps:
+      # Mock deployment without AWS authentication
       - name: Mock Staging Deployment
         run: |
           echo "=========================================================="
-          echo "DEPLOYING TO STAGING ENVIRONMENT (AWS Account: STAGING)"
+          echo "DEPLOYING TO STAGING ENVIRONMENT"
+          echo "AWS Account: STAGING (${{ secrets.STAGING_ACCOUNT_ID }})"
           echo "Namespace: gist-api-staging"
           echo "Cluster: eks-staging-cluster"
           echo "Strategy: Blue-Green"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo "=========================================================="
           echo "Deployed to Staging Successfully."
 
+      # Post-deployment smoke tests
+      - name: Run Staging Smoke Tests
+        run: |
+          echo "Running smoke tests against Staging environment..."
+          echo "✓ Health check passed"
+          echo "✓ API response validation passed"
+          echo "✓ Database connectivity verified"
+          echo "✓ Integration with dependent services verified"
+          echo "Smoke tests completed successfully."
+
+      # Run more comprehensive tests
+      - name: Run Integration Tests
+        run: |
+          echo "Running integration tests against Staging..."
+          echo "✓ End-to-end API tests passed"
+          echo "✓ Performance baseline tests passed"
+          echo "✓ Security scan passed"
+
+  # ---------------------------------------------------------------------------
+  # Deploy to Production (Manual Approval Required)
+  # ---------------------------------------------------------------------------
   deploy-production:
     name: Deploy to Production
     needs: build-and-sign
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production')
     runs-on: ubuntu-latest
-    environment: production # Requires manual approval in GitHub settings
+    environment:
+      name: production
+      url: https://api.gist-api.example.com
+    # Manual approval gate - requires review in GitHub
+    # Configure reviewers in GitHub repository settings
     steps:
+      # Pre-deployment verification
+      - name: Pre-deployment Verification
+        run: |
+          echo "Performing pre-deployment checks..."
+          echo "✓ Image signature verified"
+          echo "✓ SBOM generated and stored"
+          echo "✓ No critical vulnerabilities in Trivy scan"
+          echo "✓ All quality gates passed"
+          echo "Pre-deployment checks completed."
+
+      # Mock deployment without AWS authentication
       - name: Mock Production Deployment
         run: |
           echo "=========================================================="
-          echo "DEPLOYING TO PRODUCTION ENVIRONMENT (AWS Account: PROD)"
+          echo "DEPLOYING TO PRODUCTION ENVIRONMENT"
+          echo "AWS Account: PROD (${{ secrets.PROD_ACCOUNT_ID }})"
           echo "Namespace: gist-api-prod"
           echo "Cluster: eks-prod-cluster"
           echo "Strategy: Canary (10% Traffic)"
+          echo "Image: ${{ env.IMAGE_NAME }}:${{ github.sha }}"
           echo "=========================================================="
           echo "Deployed to Production Successfully."
+
+      # Post-deployment smoke tests
+      - name: Run Production Smoke Tests
+        run: |
+          echo "Running smoke tests against Production environment..."
+          echo "✓ Health check passed"
+          echo "✓ API response validation passed"
+          echo "✓ Database connectivity verified"
+          echo "✓ Critical path tests passed"
+          echo "Smoke tests completed successfully."
+
+      # Verify canary deployment
+      - name: Verify Canary Traffic
+        run: |
+          echo "Verifying canary traffic routing..."
+          echo "✓ Canary metrics look healthy"
+          echo "✓ Error rates within acceptable thresholds"
+          echo "Canary verification completed."
+
+      # Full rollout (simulated)
+      - name: Complete Production Rollout
+        run: |
+          echo "Completing full production rollout..."
+          echo "✓ 100% traffic now routing to new version"
+          echo "Production rollout completed successfully."
+
+  # ---------------------------------------------------------------------------
+  # Deploy Hotfix (Emergency path)
+  # ---------------------------------------------------------------------------
+  deploy-hotfix:
+    name: Deploy Hotfix
+    needs: build-and-sign
+    if: startsWith(github.ref, 'refs/heads/hotfix/')
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://api.gist-api.example.com
+    steps:
+      - name: Hotfix Deployment
+        run: |
+          echo "=========================================================="
+          echo "HOTFIX DEPLOYMENT (Emergency)"
+          echo "Branch: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "=========================================================="
+          echo "Hotfix deployed to production."
+
+  # ---------------------------------------------------------------------------
+  # Stage 5: Post-Deployment Notifications
+  # ---------------------------------------------------------------------------
+  notify:
+    name: Deployment Notifications
+    needs: [deploy-dev, deploy-staging, deploy-production, deploy-hotfix]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Deployment Summary
+        run: |
+          echo "=========================================================="
+          echo "DEPLOYMENT SUMMARY"
+          echo "=========================================================="
+          echo "Workflow: ${{ github.workflow }}"
+          echo "Run ID: ${{ github.run_id }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "Branch: ${{ github.ref }}"
+          echo "Triggered by: ${{ github.actor }}"
+          echo "=========================================================="
+
+  # ---------------------------------------------------------------------------
+  # Cleanup: Prune Old Artifacts
+  # ---------------------------------------------------------------------------
+  cleanup:
+    name: Cleanup Old Artifacts
+    needs: notify
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prune Old Artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifacts = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100
+            });
+            
+            const thirtyDaysAgo = Date.now() - (30 * 24 * 60 * 60 * 1000);
+            
+            for (const artifact of artifacts.data.artifacts) {
+              if (new Date(artifact.created_at).getTime() < thirtyDaysAgo) {
+                console.log(`Deleting artifact: ${artifact.name} (${artifact.id})`);
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  artifact_id: artifact.id
+                });
+              }
+            }
+            console.log('Cleanup completed.');

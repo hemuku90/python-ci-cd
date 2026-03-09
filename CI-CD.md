@@ -367,3 +367,137 @@ A production service must be observable.
 - [ ] **Supply Chain Integrity**: Sign images with Cosign and verify signatures in the EKS admission controller.
 - [ ] **Least Privilege**: Pods must run as non-root with `allowPrivilegeEscalation: false`.
 - [ ] **Automated Rollbacks**: Configure Helm or ArgoCD to automatically rollback on health check failure.
+
+---
+
+## 11. Enhanced Production CI/CD Workflow Features
+
+The [`production-cicd.yml`](.github/workflows/production-cicd.yml) workflow includes additional production-grade features beyond the basic CI pipeline:
+
+### 11.1 Parallel Quality Gates
+
+Quality gates now run in parallel for faster feedback:
+
+| Job | Purpose | Time Estimate |
+| :--- | :--- | :--- |
+| `lint-and-format` | Ruff linting, formatting checks | ~30s |
+| `security-scan` | Bandit SAST, Gitleaks secrets, Dependency SBOM | ~1min |
+| `test-coverage` | pytest with coverage enforcement | ~2min |
+| `build-acceptance` | Docker build validation (no push) | ~3min |
+
+All four jobs run in parallel and must pass before the `quality-gate` consolidation job runs.
+
+### 11.2 Hotfix Branch Support
+
+Hotfix branches (`hotfix/*`) follow an emergency deployment path:
+
+```yaml
+on:
+  push:
+    branches: [main, develop, 'release/*', 'hotfix/*']
+```
+
+Hotfix deployments skip staging and go directly to production with a shorter approval process.
+
+### 11.3 Manual Trigger (Workflow Dispatch)
+
+The workflow can be triggered manually for re-runs or specific environment deployments:
+
+```yaml
+workflow_dispatch:
+  inputs:
+    environment:
+      type: choice
+      options:
+        - development
+        - staging
+        - production
+```
+
+### 11.4 Concurrency Control
+
+Prevents redundant builds by cancelling in-progress runs for the same branch:
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+```
+
+### 11.5 Supply Chain Security (Full Implementation)
+
+| Stage | Tool | Description |
+| :--- | :--- | :--- |
+| SBOM Generation | Anchore Syft | SPDX-JSON format, stored as artifact |
+| Image Signing | Cosign | AWS KMS key integration |
+| Vulnerability Scan | Trivy | SARIF format, CRITICAL/HIGH/MEDIUM |
+| Secrets Scan | Gitleaks | Prevents secrets in code |
+| SAST | Bandit | Python security issues |
+
+### 11.6 Post-Deployment Smoke Tests
+
+Each environment includes smoke tests after deployment:
+
+- **Development**: Basic health check, API response, DB connectivity
+- **Staging**: + Integration tests, performance baseline
+- **Production**: + Critical path tests, canary traffic verification
+
+### 11.7 Artifact Management
+
+- SBOM artifacts stored for 30 days
+- Automatic cleanup of artifacts older than 30 days
+- SARIF results uploaded to GitHub Security tab
+
+### 11.8 Environment URLs
+
+Each deployment job includes environment URLs for tracking:
+
+```yaml
+environment:
+  name: production
+  url: https://api.gist-api.example.com
+```
+
+---
+
+## 12. GitHub Environment Configuration
+
+For manual approval gates to work, configure GitHub Environments:
+
+### Production Environment Settings
+
+1. Go to **Repository Settings** → **Environments**
+2. Create `production` environment
+3. Configure:
+   - **Required reviewers**: 1-2 approvers
+   - **Wait timer**: Optional (e.g., 5 minutes)
+   - **Deployment branch policy**: `main` branch only
+
+### Environment Secrets
+
+Required secrets for the workflow:
+
+| Secret | Description |
+| :--- | :--- |
+| `SHARED_SERVICES_ACCOUNT_ID` | AWS account for ECR |
+| `DEV_ACCOUNT_ID` | Dev EKS AWS account ID |
+| `STAGING_ACCOUNT_ID` | Staging EKS AWS account ID |
+| `PROD_ACCOUNT_ID` | Prod EKS AWS account ID |
+| `KMS_KEY_ARN` | Cosign KMS key ARN |
+
+---
+
+## 13. Branch Protection Rules
+
+Configure branch protection rules in GitHub:
+
+| Branch | Rules |
+| :--- | :--- |
+| `main` | Require PR, 2 approvals, Require signed commits, Linear history |
+| `develop` | Require PR, 1 approval, Passing CI |
+| `release/*` | Require PR, 1 approval, Auto-merge to main on close |
+| `hotfix/*` | Require PR to main, 1 approval, Emergency workflow |
+
+---
+
+*Document Version: 2.0* | *Last Updated: 2026-03-09*

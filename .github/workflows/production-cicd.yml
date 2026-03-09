@@ -298,13 +298,15 @@ jobs:
           echo "MOCKED: Trivy Vulnerability Scan"
           echo "Would scan image: gist-api:${{ github.sha }}"
           echo "=========================================================="
-          echo '{"runs":[]}' > trivy-results.sarif
+          # Note: Skipping SARIF upload since this is mocked
+          # In production, Trivy would generate a real SARIF file
 
-      - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'trivy'
+      # Skip Trivy SARIF upload for mocked results
+      # - name: Upload Trivy SARIF
+      #   uses: github/codeql-action/upload-sarif@v3
+      #   with:
+      #     sarif_file: 'trivy-results.sarif'
+      #     category: 'trivy'
 
   # ---------------------------------------------------------------------------
   # Stage 4: Deployment Gates

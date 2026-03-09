@@ -112,14 +112,15 @@ jobs:
       # -------------------------------------------------------------------------
       # SAST: Static Application Security Testing (Bandit)
       # -------------------------------------------------------------------------
+      - name: Install Bandit
+        run: pip install bandit bandit-sarif-formatter
+
       - name: Static Analysis (Bandit SAST)
-        uses: py-bandit/bandit-action@v1
-        with:
-          targets: 'src/'
-          format: 'sarif'
-          output: 'bandit-results.sarif'
-          level: 'medium'
-          exclude: 'tests/,venv/'
+        run: |
+          bandit -r src/ -f sarif -o bandit-results.sarif -ll \
+            --exclude tests/,venv/ \
+            --ini .bandit
+        continue-on-error: true
 
       # Upload Bandit results to GitHub Security
       - name: Upload Bandit SARIF

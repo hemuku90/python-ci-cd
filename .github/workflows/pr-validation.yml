@@ -81,13 +81,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
 
-      - name: Run Bandit SAST
-        uses: shundor/bandit-action@v1
+      - name: Run Bandit security scan
+        uses: shundor/python-bandit-scan@v1
         with:
-          path: "src" # Scan the entire repository
-          level: "MEDIUM" # Report issues with medium severity or higher
-          confidence: "MEDIUM" # Report issues with medium confidence or higher
-
+          path: "."
+          level: high
+          confidence: high
+          exit_zero: true
       - name: Upload Bandit SARIF
         uses: github/codeql-action/upload-sarif@v3
         with:

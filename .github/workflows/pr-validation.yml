@@ -82,7 +82,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run Bandit SAST
-        uses: py-bandit/bandit-action@v1
+        uses: bandit-project/bandit-action@v1
         with:
           targets: 'src/'
           format: 'sarif'

@@ -37,11 +37,15 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials (Dev Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.DEV_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials (Mock - Dev Account)
+        run: |
+          echo "=========================================================="
+          echo "MOCK: AWS Credentials Configuration Step"
+          echo "Role ARN: arn:aws:iam::${{ secrets.DEV_ACCOUNT_ID }}:role/github-actions-eks-deploy"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "=========================================================="
+          echo "Note: This is a mock step. In production, this would"
+          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
 
       - name: Deploy to Development
         run: |

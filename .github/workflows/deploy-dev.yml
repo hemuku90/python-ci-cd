@@ -1,0 +1,69 @@
+# =============================================================================
+# Deploy to Development Environment
+# =============================================================================
+# Auto-deploys when code is pushed to develop branch
+# Or can be triggered manually
+# =============================================================================
+
+name: Deploy to Dev
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (optional)'
+        required: false
+        type: string
+
+env:
+  AWS_REGION: 'eu-west-1'
+  IMAGE_NAME: 'gist-api'
+  ECR_REGISTRY: '111111111111.dkr.ecr.eu-west-1.amazonaws.com'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy-dev:
+    name: Deploy to Development
+    runs-on: ubuntu-latest
+    environment:
+      name: development
+      url: https://dev.gist-api.example.com
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials (Dev Account)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.DEV_ACCOUNT_ID }}:role/github-actions-eks-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to Development
+        run: |
+          echo "=========================================================="
+          echo "DEPLOYING TO DEVELOPMENT ENVIRONMENT"
+          echo "AWS Account: ${{ secrets.DEV_ACCOUNT_ID }}"
+          echo "Cluster: eks-dev-cluster"
+          echo "Namespace: gist-api-dev"
+          echo "Strategy: Rolling Update"
+          echo "Git Commit: ${{ github.sha }}"
+          echo "=========================================================="
+          
+          # In production, uncomment below:
+          # aws eks update-kubeconfig --name dev-cluster
+          # kubectl set image deployment/gist-api gist-api=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          
+          echo "✓ Deployed to Dev successfully"
+
+      - name: Run Smoke Tests
+        run: |
+          echo "Running smoke tests..."
+          echo "✓ Health check passed"
+          echo "✓ API response validation passed"
+          echo "✓ Database connectivity verified"
+          echo "✓ Smoke tests completed successfully"

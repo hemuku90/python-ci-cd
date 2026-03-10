@@ -9,6 +9,11 @@
 name: Deploy to Environment
 
 on:
+  # Triggered after build workflow completes on develop branch
+  workflow_run:
+    workflows: ["Build & Sign Image", "Build & Sign Image (Mock)"]
+    types: [completed]
+    branches: [develop]
   # Triggered by GitOps repository changes (ArgoCD sync)
   repository_dispatch:
     types: [deployment-requested]
@@ -59,8 +64,11 @@ jobs:
     environment:
       name: development
       url: https://dev.gist-api.example.com
-    # Auto-deploy for develop branch pushes
-    if: github.event_name == 'repository_dispatch' || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
+    # Auto-deploy for develop branch pushes (only if build succeeded)
+    if: >
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') 
+      || github.event_name == 'repository_dispatch' 
+      || (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'dev')
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

@@ -82,7 +82,7 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run Bandit security scan
-        uses: shundor/python-bandit-scan@v1
+        uses: PyCQA/bandit-action@v1
         with:
           path: "."
           level: high

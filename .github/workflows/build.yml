@@ -1,0 +1,388 @@
+# =============================================================================
+# Image Build Workflow (MOCK MODE)
+# =============================================================================
+# This is a mock version for testing without real AWS credentials
+# It simulates the same flow as the real workflow
+# =============================================================================
+
+name: Build & Sign Image (Mock)
+
+on:
+  push:
+    branches: [develop, 'release/*', main, 'hotfix/*']
+    tags:
+      - 'v*'
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build'
+        required: true
+        default: develop
+        type: string
+
+# Cancel in-progress runs for same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: '3.12'
+  IMAGE_NAME: 'gist-api'
+  AWS_REGION: 'eu-west-1'
+  # Mock ECR Registry (not real)
+  ECR_REGISTRY: '111111111111.dkr.ecr.eu-west-1.amazonaws.com'
+  ARTIFACT_RETENTION_DAYS: 30
+  # Mock mode flag
+  MOCK_MODE: 'true'
+
+permissions:
+  id-token: write
+  contents: read
+  security-events: write
+  packages: write
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Build and Push Docker Image (Mock)
+  # ---------------------------------------------------------------------------
+  build-and-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image-digest: ${{ steps.build-image.outputs.digest }}
+      image-tag: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}
+    steps:
+      - name: Extract Short SHA
+        id: extract_sha
+        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Mock: Skip AWS credentials - using mock mode
+      # - name: Configure AWS Credentials
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push
+      #     aws-region: ${{ env.AWS_REGION }}
+
+      # Mock: Simulate ECR Login
+      - name: Mock Login to Amazon ECR
+        id: login-ecr
+        run: |
+          echo "::notice::MOCK MODE: Simulating AWS ECR Login"
+          echo "::notice::Would login to: ${{ env.ECR_REGISTRY }}"
+          echo "registry=${{ env.ECR_REGISTRY }}" >> $GITHUB_OUTPUT
+          echo "username=AWS" >> $GITHUB_OUTPUT
+          echo "password=mock-password" >> $GITHUB_OUTPUT
+
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Mock Build and Push Image
+        id: build-image
+        run: |
+          echo "::notice::MOCK MODE: Building and pushing Docker image"
+          echo "::notice::Image: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}"
+          echo "::notice::Platforms: linux/amd64,linux/arm64"
+          
+          # Simulate build time
+          echo "::notice::Building Docker image with Python ${{ env.PYTHON_VERSION }}..."
+          sleep 2
+          
+          # Mock digest (simulating a real image digest)
+          MOCK_DIGEST="sha256:$(echo ${{ github.sha }}$(date +%s) | md5sum | head -c 64)"
+          echo "::notice::Image built successfully"
+          echo "::notice::Pushing image to registry..."
+          sleep 1
+          echo "::notice::Image pushed successfully!"
+          echo "::notice::Digest: $MOCK_DIGEST"
+          
+          # Set outputs
+          echo "digest=$MOCK_DIGEST" >> $GITHUB_OUTPUT
+          echo "tag=${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+
+      # Store image info for downstream jobs
+      - name: Save Image Info
+        run: |
+          echo "${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}" > image-tag.txt
+          echo "${{ steps.build-image.outputs.digest }}" > image-digest.txt
+
+      - name: Upload Image Info
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-info
+          path: |
+            image-tag.txt
+            image-digest.txt
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Generate SBOM (Mock)
+  # ---------------------------------------------------------------------------
+  generate-sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Image Info
+        uses: actions/download-artifact@v4
+        with:
+          name: image-info
+          path: .
+
+      # Mock: Skip AWS credentials
+      - name: Mock Configure AWS Credentials
+        run: |
+          echo "::notice::MOCK MODE: Skipping AWS credentials configuration"
+
+      # Mock: Simulate ECR Login
+      - name: Mock Login to Amazon ECR
+        run: |
+          echo "::notice::MOCK MODE: Simulating AWS ECR Login"
+          echo "registry=${{ env.ECR_REGISTRY }}" >> $GITHUB_OUTPUT
+          echo "username=AWS" >> $GITHUB_OUTPUT
+          echo "password=mock-password" >> $GITHUB_OUTPUT
+
+      - name: Read Image Tag
+        id: image
+        run: |
+          IMAGE_TAG=$(cat image-tag.txt)
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # Mock: Generate SBOM using printf to avoid YAML heredoc issues
+      - name: Mock Generate SBOM (Anchore Syft)
+        run: |
+          echo "::notice::MOCK MODE: Generating SBOM"
+          echo "::notice::Would analyze image: ${{ steps.image.outputs.tag }}"
+          echo "::notice::Creating mock SBOM file..."
+          
+          # Create mock SBOM using printf with escaped JSON
+          printf '%s\n' '{"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"gist-api-mock-sbom","documentNamespace":"https://example.com/mock-sbom","creationInfo":{"created":"2024-01-01T00:00:00Z","creators":["Mock SBOM Generator"]},"packages":[]}' > sbom.json
+          
+          echo "::notice::SBOM generated successfully: sbom.json"
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifact
+          path: sbom.json
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Sign Container Image (Mock)
+  # ---------------------------------------------------------------------------
+  sign-image:
+    name: Sign Image
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Image Info
+        uses: actions/download-artifact@v4
+        with:
+          name: image-info
+          path: .
+
+      # Mock: Skip AWS credentials
+      - name: Mock Configure AWS Credentials
+        run: |
+          echo "::notice::MOCK MODE: Skipping AWS credentials configuration"
+
+      # Mock: Simulate ECR Login
+      - name: Mock Login to Amazon ECR
+        run: |
+          echo "::notice::MOCK MODE: Simulating AWS ECR Login"
+          echo "registry=${{ env.ECR_REGISTRY }}" >> $GITHUB_OUTPUT
+          echo "username=AWS" >> $GITHUB_OUTPUT
+          echo "password=mock-password" >> $GITHUB_OUTPUT
+
+      - name: Read Image Tag
+        id: image
+        run: |
+          IMAGE_TAG=$(cat image-tag.txt)
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # Mock: Install Cosign
+      - name: Mock Install Cosign
+        run: |
+          echo "::notice::MOCK MODE: Installing Cosign (skipped in mock mode)"
+
+      # Mock: Sign Image with Cosign
+      - name: Mock Sign Image with Cosign (AWS KMS)
+        run: |
+          echo "::notice::MOCK MODE: Signing image with Cosign"
+          echo "::notice::Would sign image: ${{ steps.image.outputs.tag }}"
+          echo "::notice::Using KMS key: ${{ secrets.KMS_KEY_ARN }}"
+          echo "::notice::Image signed successfully!"
+          echo "::notice::Signature: mock-signature-${{ github.sha }}"
+
+      # Mock: Verify Signature
+      - name: Mock Verify Signature
+        run: |
+          echo "::notice::MOCK MODE: Verifying signature"
+          echo "::notice::Signature verified successfully!"
+
+      # Mock: Upload Signature
+      - name: Mock Upload Signature
+        run: |
+          echo "::notice::MOCK MODE: Creating mock signature artifact"
+          echo "mock-signature" > cosign.pub
+
+      - name: Upload Signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: signature-artifact
+          path: |
+            cosign.pub
+          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Vulnerability Scan (Mock)
+  # ---------------------------------------------------------------------------
+  vuln-scan:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Download Image Info
+        uses: actions/download-artifact@v4
+        with:
+          name: image-info
+          path: .
+
+      # Mock: Skip AWS credentials
+      - name: Mock Configure AWS Credentials
+        run: |
+          echo "::notice::MOCK MODE: Skipping AWS credentials configuration"
+
+      # Mock: Simulate ECR Login
+      - name: Mock Login to Amazon ECR
+        run: |
+          echo "::notice::MOCK MODE: Simulating AWS ECR Login"
+          echo "registry=${{ env.ECR_REGISTRY }}" >> $GITHUB_OUTPUT
+          echo "username=AWS" >> $GITHUB_OUTPUT
+          echo "password=mock-password" >> $GITHUB_OUTPUT
+
+      - name: Read Image Tag
+        id: image
+        run: |
+          IMAGE_TAG=$(cat image-tag.txt)
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # Mock: Run Trivy Scanner using printf to avoid YAML heredoc issues
+      - name: Mock Run Trivy Scanner
+        run: |
+          echo "::notice::MOCK MODE: Running Trivy vulnerability scan"
+          echo "::notice::Would scan image: ${{ steps.image.outputs.tag }}"
+          echo "::notice::Scanning for: CRITICAL, HIGH, MEDIUM vulnerabilities"
+          sleep 2
+          echo "::notice::Scan completed"
+          
+          # Create mock SARIF result using printf with escaped JSON
+          printf '%s\n' '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Trivy","informationUri":"https://github.com/aquasecurity/trivy"}},"results":[]}]}' > trivy-results.sarif
+          
+          echo "::notice::Mock vulnerability scan completed with 0 findings"
+
+      - name: Upload Trivy SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy'
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Create Git Tag (for releases)
+  # ---------------------------------------------------------------------------
+  create-tag:
+    name: Create Release Tag
+    runs-on: ubuntu-latest
+    needs: [build-and-push, sign-image, vuln-scan]
+    if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/release/')
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Image Info
+        uses: actions/download-artifact@v4
+        with:
+          name: image-info
+          path: .
+
+      - name: Read Image Tag
+        id: image
+        run: |
+          IMAGE_TAG=$(cat image-tag.txt)
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Create Git Tag
+        run: |
+          TAG_NAME="v$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-8)"
+          git tag -a $TAG_NAME -m "Release $TAG_NAME - Image: ${{ steps.image.outputs.tag }}"
+          git push origin $TAG_NAME
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="v$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-8)"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "release_name=Release $TAG_NAME" >> $GITHUB_OUTPUT
+
+  # ---------------------------------------------------------------------------
+  # Job 6: Notify - Build Complete
+  # ---------------------------------------------------------------------------
+  notify:
+    name: Notify Build Complete
+    needs: [build-and-push, sign-image, vuln-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Image Info
+        uses: actions/download-artifact@v4
+        with:
+          name: image-info
+          path: .
+        continue-on-error: true
+
+      - name: Summary
+        run: |
+          echo "## Build Summary (MOCK MODE)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build & Push | ${{ needs.build-and-push.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SBOM Generation | ${{ needs.generate-sbom.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Signing | ${{ needs.sign-image.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Vulnerability Scan | ${{ needs.vuln-scan.result }} |" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f image-tag.txt ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Image:** $(cat image-tag.txt)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "**Note:** This run was executed in MOCK MODE - no actual AWS resources were used." >> $GITHUB_STEP_SUMMARY

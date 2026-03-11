@@ -1,0 +1,47 @@
+# =============================================================================
+# Deploy to Production Environment
+# =============================================================================
+# Manual trigger only using workflow dispatch
+# Uses reusable deploy template
+# =============================================================================
+
+name: Deploy to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: 'Image tag to deploy (optional - defaults to short SHA)'
+        required: false
+        type: string
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.extract_sha.outputs.short_sha }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Extract Short SHA
+        id: extract_sha
+        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
+
+  deploy-production:
+    permissions:
+      id-token: write
+      contents: read
+    needs: prepare
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: prod
+      image_tag: ${{ github.event.inputs.image_tag || needs.prepare.outputs.short_sha }}
+      cluster_name: eks-prod-cluster
+      namespace: gist-api-prod
+      deployment_strategy: Canary
+      aws_account_id: "444444444444"
+      aws_region: eu-west-1
+      ecr_registry: 444444444444.dkr.ecr.eu-west-1.amazonaws.com
+      image_name: gist-api
+    secrets:
+      aws_role: arn:aws:iam::444444444444:role/github-actions-eks-deploy

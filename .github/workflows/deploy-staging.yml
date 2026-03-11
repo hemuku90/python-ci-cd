@@ -20,7 +20,6 @@ on:
 jobs:
   deploy-staging:
     permissions:
-      id-token: write
       contents: read
       security-events: write
     uses: ./.github/workflows/deploy-template.yml

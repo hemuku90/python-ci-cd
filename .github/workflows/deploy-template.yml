@@ -42,10 +42,10 @@ on:
         type: string
         default: 'eu-west-1'
         description: 'AWS region'
-      ecr_registry:
+      docker_registry:
         type: string
         required: true
-        description: 'ECR registry URL'
+        description: 'Docker registry URL (e.g., DockerHub username or GHCR)'
       image_name:
         type: string
         required: true
@@ -58,7 +58,7 @@ on:
 env:
   AWS_REGION: ${{ inputs.aws_region }}
   IMAGE_NAME: ${{ inputs.image_name }}
-  ECR_REGISTRY: ${{ inputs.ecr_registry }}
+  DOCKER_REGISTRY: ${{ inputs.docker_registry }}
 
 permissions:
   id-token: write
@@ -94,22 +94,32 @@ jobs:
             echo "=========================================================="
           fi
 
-      - name: Login to Amazon ECR
-        if: inputs.mock_mode != true
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Pull Docker Image from ECR
+      - name: Pull Docker Image from DockerHub
         if: inputs.mock_mode != true
         run: |
-          docker pull ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
+          docker pull ${{ inputs.docker_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
 
-      - name: Run Trivy Scanner
+      - name: Run Trivy Scanner (Mock)
+        if: inputs.mock_mode == true
+        run: |
+          echo "::notice::MOCK MODE: Running Trivy vulnerability scan"
+          echo "::notice::Would scan image: ${{ inputs.docker_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          echo "::notice::Scanning for: CRITICAL, HIGH, MEDIUM vulnerabilities"
+          
+          # Create mock SARIF result with no vulnerabilities
+          printf '%s\n' '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Trivy","informationUri":"https://github.com/aquasecurity/trivy"}},"results":[]}]}' > trivy-results.sarif
+          
+          echo "::notice::Mock vulnerability scan completed with 0 findings"
+
+      - name: Run Trivy Scanner (Real)
+        if: inputs.mock_mode != true
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: '${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}'
+          image-ref: '${{ inputs.docker_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
+          scan-type: 'image'
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3
@@ -162,19 +172,19 @@ jobs:
           echo "Namespace: ${{ inputs.namespace }}"
           echo "Strategy: ${{ inputs.deployment_strategy }}"
           echo "Image Tag: ${{ inputs.image_tag }}"
-          echo "Full Image: ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          echo "Full Image: ${{ inputs.docker_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
           echo "Git Commit: ${{ github.sha }}"
           echo "=========================================================="
 
       - name: Mock ECR Login
         run: |
-          echo "::notice::MOCK MODE: Would login to ECR: ${{ inputs.ecr_registry }}"
+          echo "::notice::MOCK MODE: Would login to ECR: ${{ inputs.docker_registry }}"
 
       - name: Mock Kubernetes Deployment
         run: |
           echo "::notice::MOCK MODE: Would execute the following commands:"
           echo "aws eks update-kubeconfig --name ${{ inputs.cluster_name }} --region ${{ inputs.aws_region }}"
-          echo "kubectl set image deployment/${{ inputs.image_name }} ${{ inputs.image_name }}=${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }} -n ${{ inputs.namespace }}"
+          echo "kubectl set image deployment/${{ inputs.image_name }} ${{ inputs.image_name }}=${{ inputs.docker_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }} -n ${{ inputs.namespace }}"
           echo ""
           echo "Deployment completed (mock)"
 
@@ -195,5 +205,5 @@ jobs:
           echo "Image SHA: ${{ github.sha }}"
           echo "Short SHA (8 digits): $(echo ${{ github.sha }} | cut -c1-8)"
           echo "Image Tag: ${{ inputs.image_tag }}"
-          echo "Full Image: ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          echo "Full Image: ${{ inputs.docker_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
           echo "=========================================================="

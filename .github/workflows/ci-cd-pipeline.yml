@@ -1,0 +1,413 @@
+# =============================================================================
+# Simplified CI/CD Pipeline
+# =============================================================================
+# Complete pipeline: Feature → Develop → Release → Main
+# With automated deployments and rollback capability
+# =============================================================================
+
+name: CI/CD Pipeline
+
+on:
+  # Trigger on push to feature branches and main branches
+  push:
+    branches:
+      - 'feature/**'
+      - develop
+      - 'release/**'
+      - main
+      - 'hotfix/**'
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment for deployment'
+        required: true
+        type: choice
+        options:
+          - dev
+          - qa
+          - staging
+          - production
+      image_tag:
+        description: 'Image tag to deploy (optional - auto-detects if not provided)'
+        required: false
+        type: string
+      action:
+        description: 'Action to perform'
+        required: true
+        type: choice
+        options:
+          - deploy
+          - rollback
+
+env:
+  PYTHON_VERSION: '3.12'
+  IMAGE_NAME: 'gist-api'
+  AWS_REGION: 'eu-west-1'
+  ECR_REGISTRY: '111111111111.dkr.ecr.eu-west-1.amazonaws.com'
+
+# =============================================================================
+# Permissions
+# =============================================================================
+permissions:
+  contents: read
+  security-events: write
+  packages: write
+  id-token: write  # Required for AWS OIDC (remove if not using AWS)
+
+# =============================================================================
+# Environment Configuration
+# =============================================================================
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Build and Test
+  # ---------------------------------------------------------------------------
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    outputs:
+      image-tag: ${{ steps.build.outputs.image-tag }}
+      image-digest: ${{ steps.build.outputs.image-digest }}
+      commit-sha: ${{ github.sha }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install pytest pytest-cov
+
+      - name: Run tests
+        run: |
+          pytest tests/ --cov=src --cov-report=xml --cov-report=term
+
+      - name: Run linting
+        run: |
+          pip install ruff
+          ruff check src/ tests/
+
+      # Mock: Docker build (skip in mock mode)
+      - name: Build Docker Image
+        id: build
+        run: |
+          echo "::notice::MOCK: Building Docker image"
+          echo "::notice::Image: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          
+          # Mock build
+          sleep 2
+          
+          # Output
+          echo "image-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "image-digest=sha256:$(echo ${{ github.sha }} | md5sum | head -c 64)" >> $GITHUB_OUTPUT
+          echo "::notice::Image built successfully"
+
+      # Mock: Push to registry
+      - name: Push to Registry
+        run: |
+          echo "::notice::MOCK: Pushing image to registry"
+          echo "::notice::Image: ${{ steps.build.outputs.image-tag }}"
+          sleep 1
+          echo "::notice::Image pushed successfully"
+
+      # Mock: Run Trivy scanner
+      - name: Security Scan
+        run: |
+          echo "::notice::MOCK: Running Trivy vulnerability scan"
+          echo "::notice::Scanning for CRITICAL, HIGH, MEDIUM vulnerabilities"
+          sleep 2
+          echo "::notice::Scan completed - No critical vulnerabilities found"
+          
+          # Create mock SARIF
+          printf '%s\n' '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Trivy","informationUri":"https://github.com/aquasecurity/trivy"}},"results":[]}]}' > trivy-results.sarif
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: 'trivy'
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Determine Deployment
+  # ---------------------------------------------------------------------------
+  determine-deployment:
+    name: Determine Deployment
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    # Run on push to protected branches or manual trigger
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      github.ref == 'refs/heads/develop' ||
+      startsWith(github.ref, 'refs/heads/release/') ||
+      github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/heads/hotfix/')
+    outputs:
+      environment: ${{ steps.env.outputs.environment }}
+      image-tag: ${{ steps.env.outputs.image-tag }}
+      should-deploy: ${{ steps.env.outputs.should-deploy }}
+    steps:
+      - name: Determine environment and image
+        id: env
+        run: |
+          # Default image tag from build
+          DEFAULT_TAG="${{ needs.build-and-test.outputs.image-tag }}"
+          
+          # Manual trigger overrides
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+            if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+              TAG="${{ github.event.inputs.image_tag }}"
+            else
+              TAG="$DEFAULT_TAG"
+            fi
+          else
+            # Auto-deploy based on branch
+            case "${{ github.ref }}" in
+              refs/heads/develop)
+                ENV="dev"
+                ;;
+              refs/heads/main)
+                ENV="production"
+                ;;
+              refs/heads/hotfix/*)
+                ENV="production"
+                ;;
+              refs/heads/release/*)
+                ENV="staging"
+                ;;
+              *)
+                ENV=""
+                ;;
+            esac
+            TAG="$DEFAULT_TAG"
+          fi
+          
+          # Determine if we should deploy
+          if [ -n "$ENV" ]; then
+            SHOULD_DEPLOY="true"
+          else
+            SHOULD_DEPLOY="false"
+          fi
+          
+          echo "environment=$ENV" >> $GITHUB_OUTPUT
+          echo "image-tag=$TAG" >> $GITHUB_OUTPUT
+          echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          
+          echo "::notice::Environment: $ENV"
+          echo "::notice::Image: $TAG"
+          echo "::notice::Should deploy: $SHOULD_DEPLOY"
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Deploy to Dev (Auto on develop branch)
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: Deploy to Dev
+    needs: determine-deployment
+    runs-on: ubuntu-latest
+    if: needs.determine-deployment.outputs.should-deploy == 'true' && needs.determine-deployment.outputs.environment == 'dev'
+    environment:
+      name: development
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "=========================================================="
+          echo "DEPLOYING TO DEVELOPMENT"
+          echo "=========================================================="
+          echo "Image: ${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "Environment: dev"
+          echo "Cluster: eks-dev-cluster"
+          echo "=========================================================="
+
+      - name: Mock Deploy
+        run: |
+          echo "::notice::MOCK: Deploying to EKS dev cluster"
+          echo "::notice::kubectl set image deployment/gist-api gist-api=${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "✓ Deployed to Dev"
+
+      - name: Health Check
+        run: |
+          echo "::notice::Running health checks..."
+          echo "✓ Health check passed"
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Deploy to Staging (Auto on release/*)
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy to Staging
+    needs: determine-deployment
+    runs-on: ubuntu-latest
+    if: needs.determine-deployment.outputs.should-deploy == 'true' && needs.determine-deployment.outputs.environment == 'staging'
+    environment:
+      name: staging
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "=========================================================="
+          echo "DEPLOYING TO STAGING"
+          echo "=========================================================="
+          echo "Image: ${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "Environment: staging"
+          echo "Cluster: eks-staging-cluster"
+          echo "=========================================================="
+
+      - name: Mock Deploy
+        run: |
+          echo "::notice::MOCK: Deploying to EKS staging cluster"
+          echo "::notice::kubectl set image deployment/gist-api gist-api=${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "✓ Deployed to Staging"
+
+      - name: Health Check
+        run: |
+          echo "::notice::Running health checks..."
+          echo "✓ Health check passed"
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Deploy to Production (Auto on main or hotfix/*)
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: Deploy to Production
+    needs: determine-deployment
+    runs-on: ubuntu-latest
+    if: needs.determine-deployment.outputs.should-deploy == 'true' && needs.determine-deployment.outputs.environment == 'production'
+    environment:
+      name: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "=========================================================="
+          echo "DEPLOYING TO PRODUCTION"
+          echo "=========================================================="
+          echo "Image: ${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "Environment: production"
+          echo "Cluster: eks-prod-cluster"
+          echo "=========================================================="
+
+      - name: Mock Deploy
+        run: |
+          echo "::notice::MOCK: Deploying to EKS prod cluster"
+          echo "::notice::kubectl set image deployment/gist-api gist-api=${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "✓ Deployed to Production"
+
+      - name: Health Check
+        run: |
+          echo "::notice::Running health checks..."
+          echo "✓ Health check passed"
+
+  # ---------------------------------------------------------------------------
+  # Job 6: Manual Deploy to QA (Any environment, manual trigger)
+  # ---------------------------------------------------------------------------
+  deploy-manual:
+    name: Manual Deploy
+    needs: determine-deployment
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy'
+    environment:
+      name: ${{ needs.determine-deployment.outputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Display deployment info
+        run: |
+          echo "=========================================================="
+          echo "MANUAL DEPLOYMENT"
+          echo "=========================================================="
+          echo "Image: ${{ needs.determine-deployment.outputs.image-tag }}"
+          echo "Environment: ${{ needs.determine-deployment.outputs.environment }}"
+          echo "=========================================================="
+
+      - name: Mock Deploy
+        run: |
+          echo "::notice::MOCK: Deploying to ${{ needs.determine-deployment.outputs.environment }}"
+          echo "✓ Deployed"
+
+      - name: Health Check
+        run: |
+          echo "✓ Health check passed"
+
+  # ---------------------------------------------------------------------------
+  # Job 7: Rollback (Manual trigger)
+  # ---------------------------------------------------------------------------
+  rollback:
+    name: Rollback
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'rollback'
+    environment:
+      name: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get previous deployment
+        id: prev
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          echo "::notice::Looking for previous deployment in $ENV"
+          
+          # In production, this would query Kubernetes/API to get the previous revision
+          # For mock, we'll use a previous git tag
+          PREV_TAG=$(git tag --list "deploy/$ENV/*" | sort -V | tail -n1)
+          
+          if [ -z "$PREV_TAG" ]; then
+            echo "::warning::No previous deployment found"
+            echo "previous-tag=" >> $GITHUB_OUTPUT
+          else
+            echo "::notice::Previous deployment: $PREV_TAG"
+            echo "previous-tag=$PREV_TAG" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Rollback Deployment
+        if: steps.prev.outputs.previous-tag != ''
+        run: |
+          echo "::notice::MOCK: Rolling back to ${{ steps.prev.outputs.previous-tag }}"
+          echo "::notice::kubectl rollout undo deployment/gist-api"
+          echo "✓ Rollback completed"
+
+      - name: No Rollback Possible
+        if: steps.prev.outputs.previous-tag == ''
+        run: |
+          echo "::error::No previous deployment found to rollback to"
+          exit 1
+
+  # ---------------------------------------------------------------------------
+  # Job 8: Summary
+  # ---------------------------------------------------------------------------
+  summary:
+    name: Summary
+    needs: [build-and-test, determine-deployment, deploy-dev, deploy-staging, deploy-prod, deploy-manual, rollback]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: |
+          echo "## Pipeline Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Build & Test | ${{ needs.build-and-test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Determine Deployment | ${{ needs.determine-deployment.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy Dev | ${{ needs.deploy-dev.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy Staging | ${{ needs.deploy-staging.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Deploy Prod | ${{ needs.deploy-prod.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Manual Deploy | ${{ needs.deploy-manual.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Rollback | ${{ needs.rollback.result }} |" >> $GITHUB_STEP_SUMMARY

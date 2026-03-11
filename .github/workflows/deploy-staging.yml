@@ -13,19 +13,31 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy'
-        required: true
+        description: 'Image tag to deploy (optional - defaults to short SHA)'
+        required: false
         type: string
 
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.extract_sha.outputs.short_sha }}
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Extract Short SHA
+        id: extract_sha
+        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
+
   deploy-staging:
     permissions:
       id-token: write
       contents: read
+    needs: prepare
     uses: ./.github/workflows/deploy-template.yml
     with:
       environment: staging
-      image_tag: ${{ github.event.inputs.image_tag || github.sha }}
+      image_tag: ${{ github.event.inputs.image_tag || needs.prepare.outputs.short_sha }}
       cluster_name: eks-staging-cluster
       namespace: gist-api-staging
       deployment_strategy: BlueGreen

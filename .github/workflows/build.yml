@@ -51,8 +51,11 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       image-digest: ${{ steps.build-image.outputs.digest }}
-      image-tag: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+      image-tag: ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}
     steps:
+      - name: Extract Short SHA
+        id: extract_sha
+        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
@@ -93,7 +96,7 @@ jobs:
         id: build-image
         run: |
           echo "::notice::MOCK MODE: Building and pushing Docker image"
-          echo "::notice::Image: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          echo "::notice::Image: ${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}"
           echo "::notice::Platforms: linux/amd64,linux/arm64"
           
           # Simulate build time
@@ -115,7 +118,7 @@ jobs:
       # Store image info for downstream jobs
       - name: Save Image Info
         run: |
-          echo "${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ github.sha }}" > image-tag.txt
+          echo "${{ steps.login-ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}" > image-tag.txt
           echo "${{ steps.build-image.outputs.digest }}" > image-digest.txt
 
       - name: Upload Image Info

@@ -36,6 +36,7 @@ jobs:
     needs: prepare
     uses: ./.github/workflows/deploy-template.yml
     with:
+      mock_mode: true
       environment: dev
       image_tag: ${{ github.event.inputs.image_tag || format('dev-{0}', needs.prepare.outputs.short_sha) }}
       cluster_name: eks-dev-cluster

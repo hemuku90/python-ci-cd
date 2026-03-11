@@ -11,7 +11,7 @@ name: Promote Artifact
 on:
   # Triggered after build completes successfully - ONLY for develop branch
   workflow_run:
-    workflows: ["Build & Sign Image (Mock)"]
+    workflows: ["Build & Sign Image"]
     types: [completed]
     branches: [develop]  # Only auto-promote to Dev
   # Allow manual promotion for all environments
@@ -129,18 +129,11 @@ jobs:
           echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "promotion-allowed=true" >> $GITHUB_OUTPUT
 
-      - name: Configure AWS Credentials (Mock - Shared Services)
-        run: |
-          echo "=========================================================="
-          echo "MOCK: AWS Credentials Configuration Step"
-          echo "Role ARN: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push"
-          echo "AWS Region: ${{ env.AWS_REGION }}"
-          echo "=========================================================="
-          echo "Note: This is a mock step. In production, this would"
-          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Verify Image Exists
         run: |
@@ -156,18 +149,11 @@ jobs:
     needs: validate-image
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials (Mock - for Signature Verification)
-        run: |
-          echo "=========================================================="
-          echo "MOCK: AWS Credentials Configuration Step"
-          echo "Role ARN: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push"
-          echo "AWS Region: ${{ env.AWS_REGION }}"
-          echo "=========================================================="
-          echo "Note: This is a mock step. In production, this would"
-          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.4.0
@@ -192,18 +178,11 @@ jobs:
       uat-tag: ${{ steps.tag.outputs.uat-tag }}
       prod-tag: ${{ steps.tag.outputs.prod-tag }}
     steps:
-      - name: Configure AWS Credentials (Mock - for Tag Creation)
-        run: |
-          echo "=========================================================="
-          echo "MOCK: AWS Credentials Configuration Step"
-          echo "Role ARN: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push"
-          echo "AWS Region: ${{ env.AWS_REGION }}"
-          echo "=========================================================="
-          echo "Note: This is a mock step. In production, this would"
-          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
-
-      - name: Login to Amazon ECR
-        uses: aws-actions/amazon-ecr-login@v2
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create Environment Tags
         id: tag
@@ -219,7 +198,7 @@ jobs:
           docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
           docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
           
-          # Push tags to ECR
+          # Push tags to DockerHub
           docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
           docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
           docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA

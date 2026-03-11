@@ -86,7 +86,7 @@ jobs:
       - name: Display Deployment Information
         run: |
           echo "=========================================================="
-          echo "DEPLOYING TO ${{ inputs.environment | upper }} ENVIRONMENT"
+          echo "DEPLOYING TO $(echo "${{ inputs.environment }}" | tr "[:lower:]" "[:upper:]") ENVIRONMENT"
           echo "=========================================================="
           echo "AWS Account: ${{ inputs.aws_account_id }}"
           echo "Cluster: ${{ inputs.cluster_name }}"

@@ -129,12 +129,11 @@ jobs:
           echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "promotion-allowed=true" >> $GITHUB_OUTPUT
 
-      # Login to DockerHub (only needed for private repos)
-      # - name: Login to DockerHub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Verify Image Exists
         run: |
@@ -150,12 +149,11 @@ jobs:
     needs: validate-image
     runs-on: ubuntu-latest
     steps:
-      # Login to DockerHub (only needed for private repos)
-      # - name: Login to DockerHub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3.4.0
@@ -180,12 +178,11 @@ jobs:
       uat-tag: ${{ steps.tag.outputs.uat-tag }}
       prod-tag: ${{ steps.tag.outputs.prod-tag }}
     steps:
-      # Login to DockerHub (only needed for private repos)
-      # - name: Login to DockerHub
-      #   uses: docker/login-action@v3
-      #   with:
-      #     username: ${{ secrets.DOCKERHUB_USERNAME }}
-      #     password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create Environment Tags
         id: tag

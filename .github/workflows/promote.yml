@@ -22,10 +22,10 @@ on:
         required: true
         type: choice
         options:
-          - build
           - dev
           - qa
           - staging
+          - uat
       target_environment:
         description: 'Target environment'
         required: true
@@ -34,6 +34,7 @@ on:
           - dev
           - qa
           - staging
+          - uat
           - production
       image_tag:
         description: 'Image tag to promote (Git SHA)'
@@ -84,7 +85,7 @@ jobs:
               release/*)
                 # Release branches - require manual promotion
                 echo "Release branch detected. Manual promotion required."
-                echo "Please use workflow_dispatch to promote to QA/Stage/Prod"
+                echo "Please use workflow_dispatch to promote to QA/Stage/UAT/Prod"
                 echo "promotion-allowed=false" >> $GITHUB_OUTPUT
                 exit 0
                 ;;
@@ -118,6 +119,8 @@ jobs:
             IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           elif [ "$SOURCE" == "staging" ]; then
             IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
+          elif [ "$SOURCE" == "uat" ]; then
+            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           else
             # Manual trigger
             IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}"
@@ -126,11 +129,15 @@ jobs:
           echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
           echo "promotion-allowed=true" >> $GITHUB_OUTPUT
 
-      - name: Configure AWS Credentials (Shared Services)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials (Mock - Shared Services)
+        run: |
+          echo "=========================================================="
+          echo "MOCK: AWS Credentials Configuration Step"
+          echo "Role ARN: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "=========================================================="
+          echo "Note: This is a mock step. In production, this would"
+          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -149,11 +156,15 @@ jobs:
     needs: validate-image
     runs-on: ubuntu-latest
     steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials (Mock - for Signature Verification)
+        run: |
+          echo "=========================================================="
+          echo "MOCK: AWS Credentials Configuration Step"
+          echo "Role ARN: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "=========================================================="
+          echo "Note: This is a mock step. In production, this would"
+          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -178,13 +189,18 @@ jobs:
       dev-tag: ${{ steps.tag.outputs.dev-tag }}
       qa-tag: ${{ steps.tag.outputs.qa-tag }}
       staging-tag: ${{ steps.tag.outputs.staging-tag }}
+      uat-tag: ${{ steps.tag.outputs.uat-tag }}
       prod-tag: ${{ steps.tag.outputs.prod-tag }}
     steps:
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push
-          aws-region: ${{ env.AWS_REGION }}
+      - name: Configure AWS Credentials (Mock - for Tag Creation)
+        run: |
+          echo "=========================================================="
+          echo "MOCK: AWS Credentials Configuration Step"
+          echo "Role ARN: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push"
+          echo "AWS Region: ${{ env.AWS_REGION }}"
+          echo "=========================================================="
+          echo "Note: This is a mock step. In production, this would"
+          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
 
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
@@ -193,24 +209,28 @@ jobs:
         id: tag
         run: |
           SOURCE_IMAGE="${{ needs.validate-image.outputs.image-tag }}"
-          SHA=$(echo $SOURCE_IMAGE | rev | cut -d':' -f1 | rev)
+          FULL_SHA=$(echo $SOURCE_IMAGE | rev | cut -d':' -f1 | rev)
+          SHORT_SHA=$(echo $FULL_SHA | cut -c1-8)
           
-          # Create tags for each environment
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-dev
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-qa
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-staging
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-prod
+          # Create tags for each environment: <env>-<short-sha>
+          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
           
           # Push tags to ECR
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-dev
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-qa
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-staging
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-prod
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
+          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
           
-          echo "dev-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-dev" >> $GITHUB_OUTPUT
-          echo "qa-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-qa" >> $GITHUB_OUTPUT
-          echo "staging-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGEName }}:$SHA-staging" >> $GITHUB_OUTPUT
-          echo "prod-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:$SHA-prod" >> $GITHUB_OUTPUT
+          echo "dev-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "qa-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "staging-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "uat-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "prod-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA" >> $GITHUB_OUTPUT
           
           echo "✓ Promotion tags created and pushed to ECR"
 
@@ -259,6 +279,14 @@ jobs:
           git commit -m "Promote to Staging: ${{ needs.create-promotion-tag.outputs.staging-tag }}"
           git push
 
+      - name: Update UAT Manifest
+        if: needs.create-promotion-tag.outputs.uat-tag != ''
+        run: |
+          echo "image: ${{ needs.create-promotion-tag.outputs.uat-tag }}" > environments/uat/image.yaml
+          git add environments/uat/image.yaml
+          git commit -m "Promote to UAT: ${{ needs.create-promotion-tag.outputs.uat-tag }}"
+          git push
+
       - name: Update Production Manifest
         if: needs.create-promotion-tag.outputs.prod-tag != ''
         run: |
@@ -299,3 +327,14 @@ jobs:
           echo "| Verify Signature | ${{ needs.verify-signature.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Create Tags | ${{ needs.create-promotion-tag.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Update GitOps | ${{ needs.update-gitops.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Docker Image Artifact Information" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Source Image:** ${{ needs.validate-image.outputs.image-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Promotion Tags Created:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Dev: ${{ needs.create-promotion-tag.outputs.dev-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- QA: ${{ needs.create-promotion-tag.outputs.qa-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Staging: ${{ needs.create-promotion-tag.outputs.staging-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- UAT: ${{ needs.create-promotion-tag.outputs.uat-tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Production: ${{ needs.create-promotion-tag.outputs.prod-tag }}" >> $GITHUB_STEP_SUMMARY

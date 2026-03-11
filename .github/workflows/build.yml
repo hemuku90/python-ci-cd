@@ -260,7 +260,7 @@ jobs:
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Build & Push | ${{ needs.build-and-push.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SBOM Generation | ${{ needs.generate-sbom.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image Signing | ${{ needs.sign-image.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Image Signing | (removed) |" >> $GITHUB_STEP_SUMMARY
           echo "| Vulnerability Scan | ${{ needs.vuln-scan.result }} |" >> $GITHUB_STEP_SUMMARY
 
           if [ -f image-tag.txt ]; then

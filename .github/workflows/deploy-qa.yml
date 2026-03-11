@@ -1,7 +1,8 @@
 # =============================================================================
 # Deploy to QA Environment
 # =============================================================================
-# Manual trigger only - requires approval
+# Manual trigger only
+# Uses reusable deploy template
 # =============================================================================
 
 name: Deploy to QA
@@ -10,58 +11,38 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy'
-        required: true
+        description: 'Image tag to deploy (optional - defaults to short SHA)'
+        required: false
         type: string
 
-env:
-  AWS_REGION: 'eu-west-1'
-  IMAGE_NAME: 'gist-api'
-  ECR_REGISTRY: '111111111111.dkr.ecr.eu-west-1.amazonaws.com'
-
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
-  deploy-qa:
-    name: Deploy to QA
+  prepare:
     runs-on: ubuntu-latest
-    environment:
-      name: qa
-      url: https://qa.gist-api.example.com
+    outputs:
+      short_sha: ${{ steps.extract_sha.outputs.short_sha }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+      - name: Extract Short SHA
+        id: extract_sha
+        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
 
-      - name: Configure AWS Credentials (QA Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.QA_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Deploy to QA
-        run: |
-          echo "=========================================================="
-          echo "DEPLOYING TO QA ENVIRONMENT"
-          echo "AWS Account: ${{ secrets.QA_ACCOUNT_ID }}"
-          echo "Cluster: eks-qa-cluster"
-          echo "Namespace: gist-api-qa"
-          echo "Strategy: Rolling Update"
-          echo "Image Tag: ${{ github.event.inputs.image_tag }}"
-          echo "=========================================================="
-          
-          # In production, uncomment below:
-          # aws eks update-kubeconfig --name qa-cluster
-          # kubectl set image deployment/gist-api gist-api=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}
-          
-          echo "✓ Deployed to QA successfully"
-
-      - name: Run QA Smoke Tests
-        run: |
-          echo "Running QA smoke tests..."
-          echo "✓ Health check passed"
-          echo "✓ API response validation passed"
-          echo "✓ Database connectivity verified"
-          echo "✓ Integration tests passed"
-          echo "✓ QA tests completed successfully"
+  deploy-qa:
+    permissions:
+      id-token: write
+      contents: read
+    needs: prepare
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      mock_mode: true
+      environment: qa
+      image_tag: ${{ github.event.inputs.image_tag || needs.prepare.outputs.short_sha }}
+      cluster_name: eks-qa-cluster
+      namespace: gist-api-qa
+      deployment_strategy: RollingUpdate
+      aws_account_id: "111111111111"
+      aws_region: eu-west-1
+      docker_registry: hemant1
+      image_name: gist-api
+    secrets:
+      aws_role: arn:aws:iam::111111111111:role/github-actions-eks-deploy

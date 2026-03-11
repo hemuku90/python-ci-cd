@@ -1,22 +1,17 @@
 # =============================================================================
-# Deploy to Development Environment
+# Deploy to UAT Environment
 # =============================================================================
-# Auto-deploys when code is pushed to develop branch
+# Manual trigger only
 # Uses reusable deploy template
 # =============================================================================
 
-name: Deploy to Dev
+name: Deploy to UAT
 
 on:
-  # Triggered after promote artifact completes successfully
-  workflow_run:
-    workflows: ["Promote Artifact"]
-    types: [completed]
-    branches: [develop]
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy (optional - defaults to dev-<short-sha>)'
+        description: 'Image tag to deploy (optional - defaults to short SHA)'
         required: false
         type: string
 
@@ -32,7 +27,7 @@ jobs:
         id: extract_sha
         run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
 
-  deploy-dev:
+  deploy-uat:
     permissions:
       id-token: write
       contents: read
@@ -40,10 +35,10 @@ jobs:
     uses: ./.github/workflows/deploy-template.yml
     with:
       mock_mode: true
-      environment: dev
-      image_tag: ${{ github.event.inputs.image_tag || format('dev-{0}', needs.prepare.outputs.short_sha) }}
-      cluster_name: eks-dev-cluster
-      namespace: gist-api-dev
+      environment: uat
+      image_tag: ${{ github.event.inputs.image_tag || needs.prepare.outputs.short_sha }}
+      cluster_name: eks-uat-cluster
+      namespace: gist-api-uat
       deployment_strategy: RollingUpdate
       aws_account_id: "111111111111"
       aws_region: eu-west-1

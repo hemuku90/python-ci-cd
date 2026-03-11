@@ -94,22 +94,32 @@ jobs:
             echo "=========================================================="
           fi
 
-      - name: Login to Amazon ECR
-        if: inputs.mock_mode != true
-        uses: aws-actions/amazon-ecr-login@v2
-
-      - name: Pull Docker Image from ECR
+      - name: Pull Docker Image from DockerHub
         if: inputs.mock_mode != true
         run: |
           docker pull ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
 
-      - name: Run Trivy Scanner
+      - name: Run Trivy Scanner (Mock)
+        if: inputs.mock_mode == true
+        run: |
+          echo "::notice::MOCK MODE: Running Trivy vulnerability scan"
+          echo "::notice::Would scan image: ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          echo "::notice::Scanning for: CRITICAL, HIGH, MEDIUM vulnerabilities"
+          
+          # Create mock SARIF result with no vulnerabilities
+          printf '%s\n' '{"$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","version":"2.1.0","runs":[{"tool":{"driver":{"name":"Trivy","informationUri":"https://github.com/aquasecurity/trivy"}},"results":[]}]}' > trivy-results.sarif
+          
+          echo "::notice::Mock vulnerability scan completed with 0 findings"
+
+      - name: Run Trivy Scanner (Real)
+        if: inputs.mock_mode != true
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: '${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}'
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
+          scan-type: 'image'
 
       - name: Upload Trivy SARIF
         uses: github/codeql-action/upload-sarif@v3

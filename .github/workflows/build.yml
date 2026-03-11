@@ -157,56 +157,6 @@ jobs:
   # ---------------------------------------------------------------------------
   # Job 3: Sign Container Image (Mock)
   # ---------------------------------------------------------------------------
-  sign-image:
-    name: Sign Image
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Download Image Info
-        uses: actions/download-artifact@v4
-        with:
-          name: image-info
-          path: .
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Read Image Tag
-        id: image
-        run: |
-          IMAGE_TAG=$(cat image-tag.txt)
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      # Install Cosign for image signing
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.4.0
-
-      # Sign Image with Cosign
-      - name: Sign Image with Cosign
-        run: |
-          cosign sign --key aws-kms://${{ secrets.KMS_KEY_ARN }} \
-            ${{ steps.image.outputs.tag }}
-
-      # Verify Signature
-      - name: Verify Signature
-        run: |
-          cosign verify --key aws-kms://${{ secrets.KMS_KEY_ARN }} \
-            ${{ steps.image.outputs.tag }}
-
-      # Upload Signature
-      - name: Upload Signature
-        uses: actions/upload-artifact@v4
-        with:
-          name: signature-artifact
-          path: |
-            cosign.pub
-          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
 
   # ---------------------------------------------------------------------------
   # Job 4: Vulnerability Scan
@@ -258,7 +208,7 @@ jobs:
   create-tag:
     name: Create Release Tag
     runs-on: ubuntu-latest
-    needs: [build-and-push, sign-image, vuln-scan]
+    needs: [build-and-push, vuln-scan]
     if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/release/')
     steps:
       - name: Checkout Code
@@ -297,7 +247,7 @@ jobs:
   # ---------------------------------------------------------------------------
   notify:
     name: Notify Build Complete
-    needs: [build-and-push, sign-image, vuln-scan]
+    needs: [build-and-push, vuln-scan]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -4,327 +4,269 @@ This document outlines a production-ready CI/CD architecture for a Python-based 
 
 ---
 
+## Table of Contents
+1. High-Level Architecture
+2. Branching Strategy
+3. Artifact Lifecycle
+4. CI/CD Workflow Breakdown
+5. GitHub Actions Workflows
+6. AWS Authentication Design
+7. Deployment & GitOps
+8. Security Architecture
+9. Environment Promotion Flow
+10. Pipeline Diagram
+11. Best Practices & Improvements
+
+---
+
 ## 1. High-Level Architecture Diagram
 
 ```mermaid
-graph LR
-    subgraph CI ["GitHub CI Pipeline"]
-        GHA[GitHub Actions]
-        Repo[Source Code]
+graph TB
+    subgraph Source["Source Code"]
+        Feature[feature/*]
+        Develop[develop]
+        Release[release/*]
+        Main[main]
+        Hotfix[hotfix/*]
     end
 
-    subgraph Registry ["Shared Services"]
+    subgraph CI["CI Pipeline"]
+        PRV[PR Validation]
+        Build[Build & Sign Image]
+        Promote[Promote Artifact]
+    end
+
+    subgraph Registry["Artifact Registry"]
         ECR[Amazon ECR]
-        KMS[AWS KMS]
     end
 
-    subgraph Environments ["AWS Environments"]
-        Dev[Dev EKS]
-        Staging[Staging EKS]
-        Prod[Prod EKS]
+    subgraph CD["CD Pipeline"]
+        Deploy[Deploy to Environment]
     end
 
-    Repo --> GHA
-    GHA --> ECR
-    GHA --> KMS
-    ECR --> Dev
-    ECR --> Staging
-    ECR --> Prod
-    
-    Dev -.-> Argo[ArgoCD / GitOps]
-    Staging -.-> Argo
-    Prod -.-> Argo
+    subgraph GitOps["GitOps"]
+        GitOpsRepo[GitOps Repo]
+        Argo[ArgoCD]
+    end
+
+    subgraph AWS["AWS Accounts"]
+        DevAWS[Dev Account]
+        QAAWS[QA Account]
+        StageAWS[Stage Account]
+        ProdAWS[Prod Account]
+    end
+
+    Feature -->|PR| Develop
+    Develop -->|push| PRV
+    PRV -->|pass| Build
+    Build -->|push| ECR
+    ECR -->|promote| Promote
+    Promote -->|update| GitOpsRepo
+    GitOpsRepo -->|sync| Argo
+    Argo -->|deploy| DevAWS
+    Argo -->|deploy| QAAWS
+    Argo -->|deploy| StageAWS
+    Argo -->|deploy| ProdAWS
 ```
 
 ---
 
-## 2. Branching Strategy: GitFlow with Production Gates
+## 2. Branching Strategy: GitLab Flow Style
 
-We use a modified **GitFlow** model designed for frequent deployments and high stability.
-
-| Branch | Purpose | Protection Rules | CI Trigger |
+| Branch | Purpose | Protection Rules | Deployment |
 | :--- | :--- | :--- | :--- |
-| `main` | Production-ready code. | Tagging required, 2 approvals, Linear history, Signed commits. | Deploy to Prod (Manual) |
-| `release/*` | Staging/RC branch for final testing. | 1 approval, No direct commits. | Deploy to Staging (Auto) |
-| `develop` | Integration branch for features. | 1 approval, Passing CI. | Deploy to Dev (Auto) |
-| `feature/*` | Individual feature work. | Merge via PR to `develop`. | Build & Test Only |
-| `hotfix/*` | Critical production fixes. | Merge to `main` and `develop`. | Deploy to Staging/Prod |
+| `feature/*` | Developer feature branches | PR to develop, 1 approval | None |
+| `develop` | Integration branch | PR, 1 approval, CI pass | Auto-deploy to Dev |
+| `release/*` | Stabilization/QA | PR to release, 1 approval | Auto-deploy to QA/Stage |
+| `main` | Production branch | PR, 2 approvals, signed commits | Manual approval to Prod |
+| `hotfix/*` | Emergency fixes | PR to main, 1 approval | Fast-track to Prod |
 
-### Merge Rules & Protections
-*   **Linear History Only**: No merge commits; squash and merge or rebase.
-*   **Status Checks**: All lint, test, and security scans MUST pass before merging.
-*   **CODEOWNERS**: Specific teams (Security, Platform) must approve changes to `Dockerfile`, `ci.yml`, and Helm charts.
+### Code Promotion Flow
 
----
-
-## 3. Secure Dockerfile Example
-
-A hardened, multi-stage Dockerfile designed for minimal attack surface and read-only environments.
-
-```dockerfile
-# Stage 1: Build & Dependencies
-FROM python:3.12-slim AS builder
-
-WORKDIR /app
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-RUN apt-get update && apt-get install -y --no-install-recommends gcc python3-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
-
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
-# Stage 2: Final Production Image
-FROM python:3.12-slim AS runtime
-
-# Security Hardening: Create non-root user
-RUN groupadd -g 10001 appgroup && \
-    useradd -u 10001 -g appgroup -s /usr/sbin/nologin -M appuser
-
-WORKDIR /app
-
-# Copy only the virtualenv and source code
-COPY --from=builder --chown=appuser:appgroup /opt/venv /opt/venv
-COPY --chown=appuser:appgroup src/ /app/
-
-# Environment configuration
-ENV PATH="/opt/venv/bin:$PATH" \
-    PORT=8080 \
-    HOME=/tmp \
-    LOG_LEVEL=INFO
-
-# Drop all capabilities and restrict write access
-USER appuser
-EXPOSE 8080
-
-# Read-only filesystem support
-VOLUME ["/tmp"]
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD ["python", "-c", "import urllib.request, sys; r = urllib.request.urlopen('http://localhost:8080/health'); sys.exit(0 if r.status == 200 else 1)"]
-
-ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+```
+feature/* ──PR──> develop ──push──> release/* ──PR──> main
+                         │              │
+                         v              v
+                     [Build]       [Build]
+                         │              │
+                         v              v
+                      Dev/QA        Stage/QA          Production
+                      (auto)         (auto)           (manual)
 ```
 
 ---
 
-## 4. CI Pipeline: Build, Scan, Sign, and Push
+## 3. Artifact Lifecycle: Build Once Deploy Everywhere
 
-This workflow handles the high-governance secure delivery process.
+### Immutable Artifact Model
 
-```yaml
-name: CI - Secure Build & Delivery
+| Stage | Action | Description |
+| :--- | :--- | :--- |
+| **Build** | Create | Docker image built with Git SHA tag |
+| **Sign** | Sign | Cosign signs image with AWS KMS |
+| **Scan** | Verify | Trivy scans for vulnerabilities |
+| **Store** | Push | Image pushed to ECR with tags |
+| **Promote** | Tag | Immutable tags created for environments |
+| **Deploy** | Use | Same image SHA deployed across environments |
 
-on:
-  push:
-    branches: [main, develop, 'release/*']
-  pull_request:
-    branches: [main, develop]
+### Image Tagging Strategy
 
-permissions:
-  id-token: write # Required for OIDC AWS Auth
-  contents: read
-  security-events: write # Required for SARIF uploads
+```
+# Build-time tags (immutable)
+111111111111.dkr.ecr.eu-west-1.amazonaws.com/gist-api:{sha}          # Primary (immutable)
+111111111111.dkr.ecr.eu-west-1.amazonaws.com/gist-api:latest        # Latest (mutable)
 
-jobs:
-  quality-gate:
-    name: Code Quality & Security
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: '3.12' }
-      
-      # 1. Dependency Analysis & Secrets Scan
-      - name: Gitleaks Secrets Scan
-        uses: gitleaks/gitleaks-action@v2
-        env: { GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} }
-
-      - name: Bandit SAST Scan
-        run: pip install bandit && bandit -r src/
-
-      # 2. Testing & Coverage
-      - name: Run Unit & Integration Tests
-        run: |
-          pip install -e ".[dev]"
-          pytest tests/ --cov=src --cov-report=xml --cov-fail-under=80
-
-  build-and-deliver:
-    name: Build, Scan & Sign
-    needs: quality-gate
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      # 3. AWS OIDC Authentication (No Static Keys)
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.SHARED_SERVICES_ACCOUNT_ID }}:role/github-actions-ecr-push
-          aws-region: eu-west-1
-
-      - name: Login to Amazon ECR
-        id: login-ecr
-        uses: aws-actions/amazon-ecr-login@v2
-
-      # 4. Multi-stage Docker Build
-      - name: Docker Build & Push
-        id: build-image
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          push: true
-          tags: ${{ steps.login-ecr.outputs.registry }}/gist-api:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # 5. Supply Chain Security: SBOM & Signing
-      - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ steps.login-ecr.outputs.registry }}/gist-api:${{ github.sha }}
-          format: spdx-json
-          output-file: sbom.json
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.4.0
-
-      - name: Sign Docker Image (Cosign)
-        run: |
-          cosign sign --key aws-kms://${{ secrets.KMS_KEY_ARN }} \
-          ${{ steps.login-ecr.outputs.registry }}/gist-api:${{ github.sha }}
-
-      # 6. Vulnerability Scanning (Trivy)
-      - name: Trivy Image Scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ steps.login-ecr.outputs.registry }}/gist-api:${{ github.sha }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
+# Promotion tags (environment-specific)
+111111111111.dkr.ecr.eu-west-1.amazonaws.com/gist-api:{sha}-dev     # Dev environment
+111111111111.dkr.ecr.eu-west-1.amazonaws.com/gist-api:{sha}-qa      # QA environment
+111111111111.dkr.ecr.eu-west-1.amazonaws.com/gist-api:{sha}-staging # Staging environment
+111111111111.dkr.ecr.eu-west-1.amazonaws.com/gist-api:{sha}-prod    # Production environment
 ```
 
 ---
 
-## 5. CD Pipeline: Multi-Account Helm Deployment
+## 4. CI/CD Workflow Breakdown
 
-This pipeline assumes three AWS accounts (Dev, Staging, Prod), each with an EKS cluster.
+### Multi-Workflow Architecture
 
-```yaml
-name: CD - Multi-Environment Deploy
+The pipeline is broken into **4 separate workflows** for maintainability:
 
-on:
-  workflow_run:
-    workflows: ["CI - Secure Build & Delivery"]
-    types: [completed]
-    branches: [main, develop, 'release/*']
+| Workflow File | Purpose | Trigger |
+| :--- | :--- | :--- |
+| `pr-validation.yml` | PR checks, tests, security scans | PR to develop/main/release/* |
+| `build.yml` | Build, sign, scan image | Push to develop/release/*/main |
+| `promote.yml` | Promote between environments | Manual only (auto to Dev) |
+| `deploy.yml` | Deploy to Kubernetes | Manual workflow_dispatch |
 
-jobs:
-  deploy-dev:
-    if: github.event.workflow_run.conclusion == 'success' && github.ref == 'refs/heads/develop'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS (Dev Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.DEV_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: eu-west-1
-      
-      - name: Helm Deploy
-        run: |
-          aws eks update-kubeconfig --name dev-cluster
-          helm upgrade --install gist-api ./charts/gist-api \
-            --namespace dev --create-namespace \
-            --set image.tag=${{ github.sha }} \
-            --values ./charts/gist-api/values-dev.yaml
+### Job Dependencies
 
-  deploy-staging:
-    if: github.event.workflow_run.conclusion == 'success' && startsWith(github.ref, 'refs/heads/release/')
-    needs: deploy-dev
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS (Staging Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.STAGING_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: eu-west-1
-
-      - name: Helm Deploy
-        run: |
-          aws eks update-kubeconfig --name staging-cluster
-          helm upgrade --install gist-api ./charts/gist-api \
-            --namespace staging --create-namespace \
-            --set image.tag=${{ github.sha }}
-
-  deploy-prod:
-    if: github.event.workflow_run.conclusion == 'success' && github.ref == 'refs/heads/main'
-    needs: deploy-staging
-    runs-on: ubuntu-latest
-    environment: production # Manual Approval Gate
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure AWS (Prod Account)
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::${{ secrets.PROD_ACCOUNT_ID }}:role/github-actions-eks-deploy
-          aws-region: eu-west-1
-
-      - name: Helm Deploy (Canary)
-        run: |
-          aws eks update-kubeconfig --name prod-cluster
-          helm upgrade --install gist-api ./charts/gist-api \
-            --namespace production \
-            --set image.tag=${{ github.sha }} \
-            --set canary.enabled=true
+```
+pr-validation.yml (parallel jobs)
+├── lint-and-format
+├── security-sast
+├── secret-scan
+├── dependency-scan
+├── unit-tests
+├── build-acceptance
+└── container-scan
+        │
+        v
+build.yml (sequential)
+├── build-and-push
+├── generate-sbom
+├── sign-image
+└── vuln-scan
+        │
+        v
+promote.yml
+├── validate-image
+├── verify-signature
+├── create-promotion-tag
+└── update-gitops
+        │
+        v
+deploy.yml (environment-specific)
+├── deploy-dev (auto from develop)
+├── deploy-qa (manual)
+├── deploy-staging (manual)
+└── deploy-production (manual)
 ```
 
 ---
 
-## 6. Helm Chart Structure
+## 5. GitHub Actions Workflow Examples
 
-Consistently structured for multi-environment overrides.
+### Workflow 1: PR Validation
 
-```text
-charts/gist-api/
-├── Chart.yaml                # Metadata
-├── values.yaml               # Defaults (Production-like)
-├── values-dev.yaml           # Dev overrides (min replicas, debug logs)
-├── values-staging.yaml       # Staging overrides
-└── templates/
-    ├── deployment.yaml       # K8s Deployment with security context
-    ├── service.yaml          # ClusterIP
-    ├── ingress.yaml          # ALB/Nginx Ingress
-    ├── hpa.yaml              # Horizontal Pod Autoscaler
-    ├── pdb.yaml              # Pod Disruption Budget
-    ├── secret.yaml           # ExternalSecrets / AWS Secrets Manager
-    └── _helpers.tpl          # Common labels/tags
-```
+**File:** `.github/workflows/pr-validation.yml`
+
+**Triggers:**
+- PR opened/updated to `develop`, `main`, `release/*`
+
+**Jobs (parallel for fast feedback):**
+1. **lint-and-format**: Ruff, Flake8 checks
+2. **security-sast**: Bandit SAST scan
+3. **secret-scan**: Gitleaks secrets detection
+4. **dependency-scan**: Safety, dependency SBOM
+5. **unit-tests**: pytest with coverage (80% threshold)
+6. **build-acceptance**: Docker build test (no push)
+7. **container-scan**: Trivy vulnerability scan
+
+**Fail-fast:** Pipeline fails immediately on security check failures.
+
+### Workflow 2: Build & Sign Image
+
+**File:** `.github/workflows/build.yml`
+
+**Triggers:**
+- Push to `develop`, `release/*`, `main`, `hotfix/*`
+- Manual `workflow_dispatch`
+
+**Jobs:**
+1. **build-and-push**: Build Docker image, push to ECR with SHA tag
+2. **generate-sbom**: Anchore Syft generates SPDX-JSON SBOM
+3. **sign-image**: Cosign signs with AWS KMS key
+4. **vuln-scan**: Trivy scans, uploads SARIF to GitHub Security
+5. **create-tag**: Creates Git tag for releases
+
+### Workflow 3: Promote Artifact
+
+**File:** `.github/workflows/promote.yml`
+
+**Triggers:**
+- After `build.yml` completes
+- Manual `workflow_dispatch`
+
+**Jobs:**
+1. **validate-image**: Verifies image exists in ECR
+2. **verify-signature**: Cosign verifies image signature
+3. **create-promotion-tag**: Creates environment-specific tags
+4. **update-gitops**: Updates GitOps repository manifests
+
+### Workflow 4: Deploy
+
+**File:** `.github/workflows/deploy.yml`
+
+**Triggers:**
+- Repository dispatch from GitOps
+- Manual `workflow_dispatch`
+
+**Jobs:**
+1. **deploy-dev**: Auto-deploy (no approval)
+2. **deploy-qa**: Auto-deploy (no approval)
+3. **deploy-staging**: Manual approval required
+4. **deploy-production**: Manual approval required
+5. **rollback**: Emergency rollback capability
 
 ---
 
-## 7. IAM Role Architecture for OIDC
+## 6. AWS Authentication Design: OIDC Federation
 
-We eliminate long-lived secrets by using **GitHub OIDC Trust**.
+### Trust Relationship
 
-### Trust Relationship (Terraform/CloudFormation)
+GitHub Actions uses **OIDC (OpenID Connect)** to assume AWS IAM roles without static credentials.
+
 ```json
 {
   "Version": "2012-10-17",
   "Statement": [
     {
       "Effect": "Allow",
-      "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com" },
+      "Principal": {
+        "Federated": "arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com"
+      },
       "Action": "sts:AssumeRoleWithWebIdentity",
       "Condition": {
         "StringLike": {
-          "token.actions.githubusercontent.com:sub": "repo:org/repo:ref:refs/heads/*"
+          "token.actions.githubusercontent.com:sub": [
+            "repo:org/repo:ref:refs/heads/develop",
+            "repo:org/repo:ref:refs/heads/main",
+            "repo:org/repo:ref:refs/heads/release/*"
+          ]
+        },
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
         }
       }
     }
@@ -332,172 +274,276 @@ We eliminate long-lived secrets by using **GitHub OIDC Trust**.
 }
 ```
 
----
+### IAM Role Strategy
 
-## 8. GitOps with ArgoCD
-
-While GitHub Actions handles the **CI (Push)**, we recommend **ArgoCD** for **CD (Pull)** to ensure architectural drift is prevented.
-
-*   **App-of-Apps Pattern**: Manage multiple clusters from a single controlplane.
-*   **Automated Sync**: ArgoCD monitors the Helm repository or Git branch and automatically reconciles the EKS cluster state.
-*   **Self-Healing**: If a developer manually edits a Kubernetes resource, ArgoCD will revert the change to match Git.
-
----
-
-## 9. Observability & Monitoring
-
-A production service must be observable.
-
-| Component | Tool Recommendation |
-| :--- | :--- |
-| **Metrics** | Prometheus + Grafana (Amazon Managed Prometheus) |
-| **Tracing** | OpenTelemetry + AWS X-Ray |
-| **Logging** | FluentBit -> CloudWatch Logs / ELK Stack |
-| **Alerting** | Alertmanager -> Slack / PagerDuty |
-
-**Best Practice**: Ensure all logs are structured (JSON) and include `trace_id` for cross-service request correlation.
+| Account | Role | Permissions | Used By |
+| :--- | :--- | :--- | :--- |
+| Shared Services | `github-actions-ecr-push` | ECR push, KMS sign | build.yml |
+| Dev | `github-actions-eks-deploy` | EKS access, kubectl | deploy-dev |
+| QA | `github-actions-eks-deploy` | EKS access, kubectl | deploy-qa |
+| Stage | `github-actions-eks-deploy` | EKS access, kubectl | deploy-staging |
+| Prod | `github-actions-eks-deploy` | EKS access, kubectl | deploy-production |
 
 ---
 
-## 10. DevSecOps Best Practices Checklist
+## 7. Deployment & GitOps Workflow
 
-- [ ] **Shift Left**: Run security scans (Bandit/Trivy) on developer machines via pre-commit hooks.
-- [ ] **Zero Trust IAM**: Use OIDC for cloud provider authentication; No static IAM user keys.
-- [ ] **Immutable Infrastructure**: Never SSH into pods; all changes must go through the CI/CD pipeline.
-- [ ] **Supply Chain Integrity**: Sign images with Cosign and verify signatures in the EKS admission controller.
-- [ ] **Least Privilege**: Pods must run as non-root with `allowPrivilegeEscalation: false`.
-- [ ] **Automated Rollbacks**: Configure Helm or ArgoCD to automatically rollback on health check failure.
+### GitOps Architecture
+
+```
+GitHub Actions                    GitOps Repository
+┌─────────────────────┐          ┌─────────────────────┐
+│                     │          │                     │
+│   Build & Sign      │──push───>│  environments/      │
+│   Image             │          │  ├── dev/           │
+│                     │          │  ├── qa/            │
+└─────────────────────┘          │  ├── staging/       │
+                                 │  └── production/    │
+                                 └──────────┬──────────┘
+                                            │
+                                            │ pull
+                                            v
+                                 ┌─────────────────────┐
+                                 │                     │
+                                 │   ArgoCD            │
+                                 │   (Kubernetes)      │
+                                 │                     │
+                                 └─────────────────────┘
+```
+
+### GitOps Repository Structure
+
+```
+gist-api-gitops/
+├── base/
+│   ├── kustomization.yaml
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   └── hpa.yaml
+├── overlays/
+│   ├── dev/
+│   │   ├── kustomization.yaml
+│   │   └── image.yaml          # Points to :sha-dev tag
+│   ├── qa/
+│   │   ├── kustomization.yaml
+│   │   └── image.yaml          # Points to :sha-qa tag
+│   ├── staging/
+│   │   ├── kustomization.yaml
+│   │   └── image.yaml          # Points to :sha-staging tag
+│   └── production/
+│       ├── kustomization.yaml
+│       └── image.yaml          # Points to :sha-prod tag
+```
+
+### Promotion Process
+
+1. **Image Built**: SHA-based image pushed to ECR
+2. **Promotion Triggered**: `promote.yml` creates environment tags
+3. **GitOps Updated**: `image.yaml` updated with new tag
+4. **ArgoCD Sync**: Detects change, applies to cluster
+5. **Deployment**: Kubernetes rolls out new version
 
 ---
 
-## 11. Enhanced Production CI/CD Workflow Features
+## 8. Security Architecture
 
-The [`production-cicd.yml`](.github/workflows/production-cicd.yml) workflow includes additional production-grade features beyond the basic CI pipeline:
+### DevSecOps Pipeline
 
-### 11.1 Parallel Quality Gates
+| Security Check | Tool | Stage | Action on Failure |
+| :--- | :--- | :--- | :--- |
+| Secrets Detection | Gitleaks | PR Validation | Block merge |
+| SAST | Bandit | PR Validation | Block merge |
+| Dependency Scan | Safety | PR Validation | Block merge |
+| Container Build | Docker Buildx | Build | Fail build |
+| Vulnerability Scan | Trivy | Build | Fail if CRITICAL |
+| SBOM Generation | Anchore Syft | Build | Generate anyway |
+| Image Signing | Cosign | Build | Block if unsigned |
+| Image Verification | Cosign | Deploy | Block if invalid |
 
-Quality gates now run in parallel for faster feedback:
+### Supply Chain Security
 
-| Job | Purpose | Time Estimate |
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Supply Chain Security                     │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Source ──> Build ──> Sign ──> Scan ──> Store ──> Deploy  │
+│                                                              │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
+│  │  Gitleaks│ │Docker    │ │ Cosign   │ │  Trivy   │     │
+│  │  Bandit  │ │Buildx    │ │ KMS      │ │  Syft    │     │
+│  │  Safety  │ │          │ │          │ │          │     │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
+│                                                              │
+│  Verification: Cosign verify at each stage                   │
+│  SBOM: SPDX-JSON format, stored in GitHub artifacts         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 9. Environment Promotion Flow
+
+### Promotion Path
+
+```
+Dev ──> QA ──> Stage ──> Production
+ │       │       │          │
+ │       │       │          └─ Manual Approval
+ │       │       └──────────── Manual Approval
+ │       └──────────────────── Manual Approval
+ └───────────────────────────── Auto (from develop branch)
+```
+
+### Environment-Specific Configuration
+
+| Environment | Cluster | Strategy | Approval | Trigger |
+| :--- | :--- | :--- | :--- | :--- |
+| Dev | eks-dev-cluster | Rolling | None | Auto (push to develop) |
+| QA | eks-qa-cluster | Rolling | Manual | workflow_dispatch |
+| Stage | eks-staging-cluster | Blue-Green | Manual | workflow_dispatch |
+| Production | eks-prod-cluster | Canary | Manual | workflow_dispatch |
+
+### Canary Deployment
+
+```
+Production Deployment Flow (Canary):
+
+1. Deploy 10% traffic ──────────────> ✓ Health check
+2. Promote to 50% traffic ──────────> ✓ Metrics stable
+3. Promote to 100% traffic ─────────> ✓ Full rollout
+
+If at any stage:
+- Error rate > 1% ──> Auto rollback
+- Latency > 500ms ──> Auto rollback
+```
+
+---
+
+## 10. Pipeline Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Dev as Developer
+    participant GH as GitHub
+    participant ECR as Amazon ECR
+    participant GitOps as GitOps Repo
+    participant Argo as ArgoCD
+    participant EKS as EKS Clusters
+
+    Dev->>GH: Push feature branch
+    GH->>GH: Run PR Validation (6 parallel jobs)
+    alt Security checks fail
+        GH-->>Dev: Block merge
+    else All checks pass
+        Dev->>GH: Merge to develop
+        GH->>GH: Trigger Build Workflow
+        GH->>ECR: Build & Push Image (SHA tag)
+        GH->>GH: Generate SBOM
+        GH->>GH: Sign with Cosign
+        GH->>GH: Scan with Trivy
+        GH->>ECR: Create promotion tags
+        GH->>GitOps: Update dev image
+        GitOps->>Argo: Trigger sync
+        Argo->>EKS: Deploy to Dev
+        Argo-->>GH: Sync complete
+        alt Manual promotion to next env
+            GH->>GitOps: Update staging image
+            GitOps->>Argo: Trigger sync
+            Argo->>EKS: Deploy to Staging
+        end
+    end
+```
+
+---
+
+## 11. Best Practices & Improvements
+
+### Security Best Practices
+
+| Practice | Implementation | Why It Matters |
 | :--- | :--- | :--- |
-| `lint-and-format` | Ruff linting, formatting checks | ~30s |
-| `security-scan` | Bandit SAST, Gitleaks secrets, Dependency SBOM | ~1min |
-| `test-coverage` | pytest with coverage enforcement | ~2min |
-| `build-acceptance` | Docker build validation (no push) | ~3min |
+| OIDC Authentication | AWS_ROLE_ARN with web identity | No static credentials, secure |
+| Image Signing | Cosign with AWS KMS | Verify image integrity |
+| SBOM Generation | Anchore Syft | Know what's in your containers |
+| Vulnerability Scanning | Trivy (CRITICAL/HIGH) | Prevent vulnerable deployments |
+| Secrets Scanning | Gitleaks | Prevent secrets in code |
+| Supply Chain | Sigstore, SLSA | Prevent tampering |
 
-All four jobs run in parallel and must pass before the `quality-gate` consolidation job runs.
+### Reliability Best Practices
 
-### 11.2 Hotfix Branch Support
-
-Hotfix branches (`hotfix/*`) follow an emergency deployment path:
-
-```yaml
-on:
-  push:
-    branches: [main, develop, 'release/*', 'hotfix/*']
-```
-
-Hotfix deployments skip staging and go directly to production with a shorter approval process.
-
-### 11.3 Manual Trigger (Workflow Dispatch)
-
-The workflow can be triggered manually for re-runs or specific environment deployments:
-
-```yaml
-workflow_dispatch:
-  inputs:
-    environment:
-      type: choice
-      options:
-        - development
-        - staging
-        - production
-```
-
-### 11.4 Concurrency Control
-
-Prevents redundant builds by cancelling in-progress runs for the same branch:
-
-```yaml
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-```
-
-### 11.5 Supply Chain Security (Full Implementation)
-
-| Stage | Tool | Description |
+| Practice | Implementation | Why It Matters |
 | :--- | :--- | :--- |
-| SBOM Generation | Anchore Syft | SPDX-JSON format, stored as artifact |
-| Image Signing | Cosign | AWS KMS key integration |
-| Vulnerability Scan | Trivy | SARIF format, CRITICAL/HIGH/MEDIUM |
-| Secrets Scan | Gitleaks | Prevents secrets in code |
-| SAST | Bandit | Python security issues |
+| Immutable Artifacts | SHA-tagged images | Reproducible deployments |
+| Canary Deployments | Progressive traffic shift | Safe rollouts |
+| Auto Rollback | K8s rollout undo | Fast recovery from failures |
+| Health Checks | Liveness/Readiness probes | Zero-downtime deployments |
+| GitOps | ArgoCD declarative | Single source of truth |
 
-### 11.6 Post-Deployment Smoke Tests
+### Operational Best Practices
 
-Each environment includes smoke tests after deployment:
-
-- **Development**: Basic health check, API response, DB connectivity
-- **Staging**: + Integration tests, performance baseline
-- **Production**: + Critical path tests, canary traffic verification
-
-### 11.7 Artifact Management
-
-- SBOM artifacts stored for 30 days
-- Automatic cleanup of artifacts older than 30 days
-- SARIF results uploaded to GitHub Security tab
-
-### 11.8 Environment URLs
-
-Each deployment job includes environment URLs for tracking:
-
-```yaml
-environment:
-  name: production
-  url: https://api.gist-api.example.com
-```
+| Practice | Implementation | Why It Matters |
+| :--- | :--- | :--- |
+| Parallel Jobs | PR validation runs in parallel | Fast feedback |
+| Artifact Retention | 30-day cleanup | Cost savings |
+| Concurrency Control | Cancel in-progress | Resource efficiency |
+| Environment Protection | GitHub Environments | Controlled releases |
+| Audit Logging | GitHub Actions logs | Compliance |
 
 ---
 
-## 12. GitHub Environment Configuration
+## Required GitHub Secrets
 
-For manual approval gates to work, configure GitHub Environments:
-
-### Production Environment Settings
-
-1. Go to **Repository Settings** → **Environments**
-2. Create `production` environment
-3. Configure:
-   - **Required reviewers**: 1-2 approvers
-   - **Wait timer**: Optional (e.g., 5 minutes)
-   - **Deployment branch policy**: `main` branch only
-
-### Environment Secrets
-
-Required secrets for the workflow:
+Configure these secrets in your repository:
 
 | Secret | Description |
 | :--- | :--- |
 | `SHARED_SERVICES_ACCOUNT_ID` | AWS account for ECR |
 | `DEV_ACCOUNT_ID` | Dev EKS AWS account ID |
-| `STAGING_ACCOUNT_ID` | Staging EKS AWS account ID |
+| `QA_ACCOUNT_ID` | QA EKS AWS account ID |
+| `STAGING_ACCOUNT_ID` | Stage EKS AWS account ID |
 | `PROD_ACCOUNT_ID` | Prod EKS AWS account ID |
-| `KMS_KEY_ARN` | Cosign KMS key ARN |
+| `KMS_KEY_ARN` | Cosign AWS KMS key ARN |
+| `GITOPS_REPO` | GitOps repository name |
+| `GITOPS_TOKEN` | Token with write access to GitOps repo |
 
 ---
 
-## 13. Branch Protection Rules
+## GitHub Environment Configuration
 
-Configure branch protection rules in GitHub:
+### Production Environment Settings
+
+1. **Settings** → **Environments** → **production**
+2. Configure:
+   - **Required reviewers**: 1-2 approvers
+   - **Wait timer**: Optional (5-30 minutes)
+   - **Deployment branch policy**: `main` branch only
+   - **Environment secrets**: Environment-specific variables
+
+### Environment URLs
+
+| Environment | URL | Description |
+| :--- | :--- | :--- |
+| Development | https://dev.gist-api.example.com | Latest from develop |
+| QA | https://qa.gist-api.example.com | Latest from release/* |
+| Staging | https://staging.gist-api.example.com | Pre-production validation |
+| Production | https://api.gist-api.example.com | Live production |
+
+---
+
+## Branch Protection Rules
+
+Configure in **Settings** → **Branches** → **Add rule**:
 
 | Branch | Rules |
 | :--- | :--- |
-| `main` | Require PR, 2 approvals, Require signed commits, Linear history |
-| `develop` | Require PR, 1 approval, Passing CI |
-| `release/*` | Require PR, 1 approval, Auto-merge to main on close |
-| `hotfix/*` | Require PR to main, 1 approval, Emergency workflow |
+| `main` | ✓ Require pull request, ✓ 2 approvals, ✓ Require signed commits, ✓ Require linear history |
+| `develop` | ✓ Require pull request, ✓ 1 approval, ✓ Require status checks to pass |
+| `release/*` | ✓ Require pull request, ✓ 1 approval, ✓ Auto-delete head branch |
+| `hotfix/*` | ✓ Require pull request, ✓ 1 approval, ✓ Allow force push (emergency) |
 
 ---
 
-*Document Version: 2.0* | *Last Updated: 2026-03-09*
+*Document Version: 3.0* | *Last Updated: 2026-03-10* | *Pipeline Architecture: Multi-Workflow GitOps*

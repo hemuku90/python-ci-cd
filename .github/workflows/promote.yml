@@ -11,7 +11,7 @@ name: Promote Artifact
 on:
   # Triggered after build completes successfully - ONLY for develop branch
   workflow_run:
-    workflows: ["Build & Sign Image"]
+    workflows: ["Build & Sign Image (Mock)"]
     types: [completed]
     branches: [develop]  # Only auto-promote to Dev
   # Allow manual promotion for all environments
@@ -43,7 +43,7 @@ on:
 env:
   AWS_REGION: 'eu-west-1'
   IMAGE_NAME: 'gist-api'
-  ECR_REGISTRY: '111111111111.dkr.ecr.eu-west-1.amazonaws.com'
+  DOCKER_REGISTRY: 'hemant1'
 
 # Cancel in-progress runs for same target
 concurrency:
@@ -112,18 +112,18 @@ jobs:
           # Get image SHA from previous build
           if [ "$SOURCE" == "build" ]; then
             # From develop branch - use the latest built image
-            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
+            IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           elif [ "$SOURCE" == "dev" ]; then
-            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
+            IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           elif [ "$SOURCE" == "qa" ]; then
-            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
+            IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           elif [ "$SOURCE" == "staging" ]; then
-            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
+            IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           elif [ "$SOURCE" == "uat" ]; then
-            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
+            IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.workflow_run.head_sha }}"
           else
             # Manual trigger
-            IMAGE_TAG="${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}"
+            IMAGE_TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.event.inputs.image_tag }}"
           fi
           
           echo "image-tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
@@ -213,24 +213,24 @@ jobs:
           SHORT_SHA=$(echo $FULL_SHA | cut -c1-8)
           
           # Create tags for each environment: <env>-<short-sha>
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
-          docker tag $SOURCE_IMAGE ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
+          docker tag $SOURCE_IMAGE ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
           
           # Push tags to ECR
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
-          docker push ${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA
+          docker push ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA
           
-          echo "dev-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "qa-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "staging-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "uat-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA" >> $GITHUB_OUTPUT
-          echo "prod-tag=${{ env.ECR_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "dev-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:dev-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "qa-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:qa-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "staging-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:staging-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "uat-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "prod-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA" >> $GITHUB_OUTPUT
           
           echo "✓ Promotion tags created and pushed to ECR"
 

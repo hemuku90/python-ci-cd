@@ -251,7 +251,7 @@ jobs:
           echo "MOCKED: Amazon ECR Login"
           echo "Would login to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com"
           echo "=========================================================="
-          echo "::set-output name=registry::123456789012.dkr.ecr.eu-west-1.amazonaws.com"
+          echo "registry=123456789012.dkr.ecr.eu-west-1.amazonaws.com" >> $GITHUB_OUTPUT
 
       # Mock Docker Build and Push
       - name: Build and Push Docker Image (Mocked)
@@ -263,7 +263,7 @@ jobs:
           echo "Would push to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/gist-api:${{ github.sha }}"
           echo "Would push to: 123456789012.dkr.ecr.eu-west-1.amazonaws.com/gist-api:latest"
           echo "=========================================================="
-          echo "::set-output name=digest::sha256:mockdigest123456789"
+          echo "digest=sha256:mockdigest123456789" >> $GITHUB_OUTPUT
 
       # -------------------------------------------------------------------------
       # SBOM Generation (Mocked)

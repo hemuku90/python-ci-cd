@@ -1,0 +1,106 @@
+# =============================================================================
+# Gitleaks Configuration
+# =============================================================================
+# This configuration is used by the Gitleaks action in PR validation
+# to detect secrets in code before merging
+# =============================================================================
+
+[allowlist]
+  description = "Allowlist for false positives"
+  # Ignore test files
+  files = [
+    "tests/.*",
+    ".*_test.go",
+    ".*_test.py"
+  ]
+  # Ignore specific secret patterns that are OK for testing
+  regexes = [
+    "mock-.+",
+    "fake-.+",
+    "dummy-.+",
+    "example-.+",
+    "test-.+"
+  ]
+
+# Gitleaks rules for detecting secrets
+# These are the default rules provided by Gitleaks
+[[rules]]
+  description = "AWS Access Key"
+  regex = "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
+  tags = ["key", "AWS"]
+
+[[rules]]
+  description = "AWS Secret Key"
+  regex = "(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z/+]{40}['\"]"
+  tags = ["key", "AWS"]
+
+[[rules]]
+  description = "GitHub Personal Access Token"
+  regex = "ghp_[0-9a-zA-Z]{36}"
+  tags = ["key", "GitHub"]
+
+[[rules]]
+  description = "GitHub OAuth Access Token"
+  regex = "gho_[0-9a-zA-Z]{36}"
+  tags = ["key", "GitHub"]
+
+[[rules]]
+  description = "GitHub App Token"
+  regex = "(ghu|ghs)_[0-9a-zA-Z]{36}"
+  tags = ["key", "GitHub"]
+
+[[rules]]
+  description = "DockerHub Access Token"
+  regex = "dckr_pat_[0-9a-zA-Z_-]{43}"
+  tags = ["key", "Docker"]
+
+[[rules]]
+  description = "Generic API Key"
+  regex = "(?i)(api[_-]?key|apikey|secret[_-]?key|access[_-]?token)['\"]?\\s*[:=]\\s*['\"][0-9a-zA-Z]{16,64}['\"]"
+  tags = ["key", "API"]
+
+[[rules]]
+  description = "Private Key Block"
+  regex = "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+  tags = ["key", "PrivateKey"]
+
+[[rules]]
+  description = "Google API Key"
+  regex = "AIza[0-9A-Za-z\\-_]{35}"
+  tags = ["key", "Google"]
+
+[[rules]]
+  description = "Slack Token"
+  regex = "xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9-]*"
+  tags = ["key", "Slack"]
+
+[[rules]]
+  description = "Stripe API Key"
+  regex = "(sk|pk)_(test|live)_[0-9a-zA-Z]{24,}"
+  tags = ["key", "Stripe"]
+
+[[rules]]
+  description = "SendGrid API Key"
+  regex = "SG\\.[0-9A-Za-z\\-_]{22}\\.[0-9A-Za-z\\-_]{43}"
+  tags = ["key", "SendGrid"]
+
+[[rules]]
+  description = "Twilio API Key"
+  regex = "SK[0-9a-fA-F]{32}"
+  tags = ["key", "Twilio"]
+
+[[rules]]
+  description = "Password in URL"
+  regex = "[a-zA-Z]{3,10}://[^/\\s:@]+:[^/\\s:@]+@[^\\s]+"
+  tags = ["key", "URL"]
+
+# Extended rules for additional security
+[[rules]]
+  description = "JWT Token"
+  regex = "eyJ[A-Za-z0-9-_=]+\\.[A-Za-z0-9-_=]+\\.?[A-Za-z0-9-_.+/=]*"
+  tags = ["token", "JWT"]
+
+[[rules]]
+  description = "Base64 encoded secret"
+  regex = "(?i)(password|secret|token|api[_-]?key|apikey)['\"]?\\s*[:=]\\s*['\"]?([A-Za-z0-9+/]{20,}={0,2})['\"]?"
+  tags = ["secret", "Base64"]

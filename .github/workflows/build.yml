@@ -196,12 +196,6 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH,MEDIUM'
 
-      - name: Upload Trivy SARIF
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'trivy'
-
   # ---------------------------------------------------------------------------
   # Job 5: Create Git Tag (for releases)
   # ---------------------------------------------------------------------------

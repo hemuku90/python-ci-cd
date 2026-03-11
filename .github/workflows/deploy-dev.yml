@@ -8,7 +8,10 @@
 name: Deploy to Dev
 
 on:
-  push:
+  # Triggered after promote artifact completes successfully
+  workflow_run:
+    workflows: ["Promote Artifact"]
+    types: [completed]
     branches: [develop]
   workflow_dispatch:
     inputs:

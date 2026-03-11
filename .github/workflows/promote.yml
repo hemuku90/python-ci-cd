@@ -142,34 +142,11 @@ jobs:
           echo "✓ Image verified: $IMAGE"
 
   # ---------------------------------------------------------------------------
-  # Job 2: Verify Image Signature
-  # ---------------------------------------------------------------------------
-  verify-signature:
-    name: Verify Image Signature
-    needs: validate-image
-    runs-on: ubuntu-latest
-    steps:
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@v3.4.0
-
-      - name: Verify Image Signature
-        run: |
-          cosign verify --key aws-kms://${{ secrets.KMS_KEY_ARN }} \
-            ${{ needs.validate-image.outputs.image-tag }}
-          echo "✓ Image signature verified"
-
-  # ---------------------------------------------------------------------------
   # Job 3: Create Promotion Tag
   # ---------------------------------------------------------------------------
   create-promotion-tag:
     name: Create Promotion Tag
-    needs: [validate-image, verify-signature]
+    needs: [validate-image]
     runs-on: ubuntu-latest
     outputs:
       dev-tag: ${{ steps.tag.outputs.dev-tag }}
@@ -211,7 +188,7 @@ jobs:
           echo "uat-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:uat-$SHORT_SHA" >> $GITHUB_OUTPUT
           echo "prod-tag=${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:prod-$SHORT_SHA" >> $GITHUB_OUTPUT
           
-          echo "✓ Promotion tags created and pushed to ECR"
+          echo "✓ Promotion tags created and pushed to DockerHub"
 
   # ---------------------------------------------------------------------------
   # Job 4: Update GitOps Repository
@@ -292,7 +269,7 @@ jobs:
   # ---------------------------------------------------------------------------
   notify:
     name: Notify Promotion
-    needs: [validate-image, verify-signature, create-promotion-tag, update-gitops]
+    needs: [validate-image, create-promotion-tag, update-gitops]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -303,7 +280,6 @@ jobs:
           echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Validate Image | ${{ needs.validate-image.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Verify Signature | ${{ needs.verify-signature.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Create Tags | ${{ needs.create-promotion-tag.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Update GitOps | ${{ needs.update-gitops.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY

@@ -10,6 +10,10 @@ name: Deploy Template
 on:
   workflow_call:
     inputs:
+      mock_mode:
+        type: boolean
+        default: true
+        description: 'Run in mock mode (no actual AWS operations)'
       environment:
         type: string
         required: true
@@ -73,21 +77,29 @@ jobs:
 
       - name: Configure AWS Credentials (Mock)
         run: |
-          echo "=========================================================="
-          echo "MOCK: AWS Credentials Configuration"
-          echo "=========================================================="
-          echo "Environment: ${{ inputs.environment }}"
-          echo "AWS Region: ${{ inputs.aws_region }}"
-          echo "Role ARN: ${{ secrets.aws_role }}"
-          echo "=========================================================="
-          echo "Note: This is a mock step. In production, this would"
-          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
-          echo "=========================================================="
+          if [ "${{ inputs.mock_mode }}" == "true" ]; then
+            echo "=========================================================="
+            echo "MOCK MODE: Skipping AWS Credentials Configuration"
+            echo "=========================================================="
+            echo "Environment: ${{ inputs.environment }}"
+            echo "AWS Region: ${{ inputs.aws_region }}"
+            echo "Role ARN: ${{ secrets.aws_role }}"
+            echo "=========================================================="
+            echo "Note: This is a mock step. In production, this would"
+            echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
+            echo "=========================================================="
+          else
+            echo "=========================================================="
+            echo "Configuring AWS Credentials"
+            echo "=========================================================="
+          fi
 
       - name: Login to Amazon ECR
+        if: inputs.mock_mode != true
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Pull Docker Image from ECR
+        if: inputs.mock_mode != true
         run: |
           docker pull ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
 
@@ -114,7 +126,7 @@ jobs:
   deploy:
     name: Deploy to ${{ inputs.environment }}
     runs-on: ubuntu-latest
-    needs: security-scan
+    needs: [security-scan]
     environment:
       name: ${{ inputs.environment }}
     steps:
@@ -123,16 +135,22 @@ jobs:
 
       - name: Configure AWS Credentials (Mock)
         run: |
-          echo "=========================================================="
-          echo "MOCK: AWS Credentials Configuration"
-          echo "=========================================================="
-          echo "Environment: ${{ inputs.environment }}"
-          echo "AWS Region: ${{ inputs.aws_region }}"
-          echo "Role ARN: ${{ secrets.aws_role }}"
-          echo "=========================================================="
-          echo "Note: This is a mock step. In production, this would"
-          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
-          echo "=========================================================="
+          if [ "${{ inputs.mock_mode }}" == "true" ]; then
+            echo "=========================================================="
+            echo "MOCK MODE: Skipping AWS Credentials Configuration"
+            echo "=========================================================="
+            echo "Environment: ${{ inputs.environment }}"
+            echo "AWS Region: ${{ inputs.aws_region }}"
+            echo "Role ARN: ${{ secrets.aws_role }}"
+            echo "=========================================================="
+            echo "Note: This is a mock step. In production, this would"
+            echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
+            echo "=========================================================="
+          else
+            echo "=========================================================="
+            echo "Configuring AWS Credentials"
+            echo "=========================================================="
+          fi
 
       - name: Display Deployment Information
         run: |

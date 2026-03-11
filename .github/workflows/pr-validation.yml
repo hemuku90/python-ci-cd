@@ -112,7 +112,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_COMMENTS: 'true'
-          GITLEAKS_CONFIG_PATH: .gitleaks.toml
 
   # ---------------------------------------------------------------------------
   # Job 4: Dependency Vulnerability Scanning

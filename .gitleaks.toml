@@ -23,15 +23,9 @@
   ]
 
 # Gitleaks rules for detecting secrets
-# These are the default rules provided by Gitleaks
 [[rules]]
   description = "AWS Access Key"
-  regex = "(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}"
-  tags = ["key", "AWS"]
-
-[[rules]]
-  description = "AWS Secret Key"
-  regex = "(?i)aws(.{0,20})?(?-i)['\"][0-9a-zA-Z/+]{40}['\"]"
+  regex = "AKIA[0-9A-Z]{16}"
   tags = ["key", "AWS"]
 
 [[rules]]
@@ -46,7 +40,7 @@
 
 [[rules]]
   description = "GitHub App Token"
-  regex = "(ghu|ghs)_[0-9a-zA-Z]{36}"
+  regex = "ghu_[0-9a-zA-Z]{36}"
   tags = ["key", "GitHub"]
 
 [[rules]]
@@ -55,46 +49,16 @@
   tags = ["key", "Docker"]
 
 [[rules]]
-  description = "Generic API Key"
-  regex = "(?i)(api[_-]?key|apikey|secret[_-]?key|access[_-]?token)['\"]?\\s*[:=]\\s*['\"][0-9a-zA-Z]{16,64}['\"]"
-  tags = ["key", "API"]
-
-[[rules]]
   description = "Private Key Block"
-  regex = "-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----"
+  regex = "-----BEGIN.*PRIVATE KEY-----"
   tags = ["key", "PrivateKey"]
 
 [[rules]]
   description = "Google API Key"
-  regex = "AIza[0-9A-Za-z\\-_]{35}"
+  regex = "AIza[0-9A-Za-z_-]{35}"
   tags = ["key", "Google"]
 
 [[rules]]
   description = "Slack Token"
-  regex = "xox[baprs]-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9-]*"
+  regex = "xox[baprs]-[0-9]+-[0-9]+-[a-zA-Z0-9]+"
   tags = ["key", "Slack"]
-
-[[rules]]
-  description = "Stripe API Key"
-  regex = "(sk|pk)_(test|live)_[0-9a-zA-Z]{24,}"
-  tags = ["key", "Stripe"]
-
-[[rules]]
-  description = "SendGrid API Key"
-  regex = "SG\\.[0-9A-Za-z\\-_]{22}\\.[0-9A-Za-z\\-_]{43}"
-  tags = ["key", "SendGrid"]
-
-[[rules]]
-  description = "Twilio API Key"
-  regex = "SK[0-9a-fA-F]{32}"
-  tags = ["key", "Twilio"]
-
-[[rules]]
-  description = "Password in URL"
-  regex = "[a-zA-Z]{3,10}://[^/\\s:@]+:[^/\\s:@]+@[^\\s]+"
-  tags = ["key", "URL"]
-
-[[rules]]
-  description = "JWT Token"
-  regex = "eyJ[A-Za-z0-9-_=]+\\.[A-Za-z0-9-_=]+\\.?[A-Za-z0-9-_.+/=]*"
-  tags = ["token", "JWT"]

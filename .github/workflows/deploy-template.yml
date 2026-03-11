@@ -71,16 +71,25 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Configure AWS Credentials (Mock)
+        run: |
+          echo "=========================================================="
+          echo "MOCK: AWS Credentials Configuration"
+          echo "=========================================================="
+          echo "Environment: ${{ inputs.environment }}"
+          echo "AWS Region: ${{ inputs.aws_region }}"
+          echo "Role ARN: ${{ secrets.aws_role }}"
+          echo "=========================================================="
+          echo "Note: This is a mock step. In production, this would"
+          echo "assume the IAM role using aws-actions/configure-aws-credentials@v4"
+          echo "=========================================================="
 
-      - name: Build Docker Image (for scanning)
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          load: true
-          tags: ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
-          cache-from: type=gha
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Pull Docker Image from ECR
+        run: |
+          docker pull ${{ inputs.ecr_registry }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
 
       - name: Run Trivy Scanner
         uses: aquasecurity/trivy-action@master

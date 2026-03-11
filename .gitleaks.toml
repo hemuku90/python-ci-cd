@@ -94,13 +94,7 @@
   regex = "[a-zA-Z]{3,10}://[^/\\s:@]+:[^/\\s:@]+@[^\\s]+"
   tags = ["key", "URL"]
 
-# Extended rules for additional security
 [[rules]]
   description = "JWT Token"
   regex = "eyJ[A-Za-z0-9-_=]+\\.[A-Za-z0-9-_=]+\\.?[A-Za-z0-9-_.+/=]*"
   tags = ["token", "JWT"]
-
-[[rules]]
-  description = "Base64 encoded secret"
-  regex = "(?i)(password|secret|token|api[_-]?key|apikey)['\"]?\\s*[:=]\\s*['\"]?([A-Za-z0-9+/]{20,}={0,2})['\"]?"
-  tags = ["secret", "Base64"]

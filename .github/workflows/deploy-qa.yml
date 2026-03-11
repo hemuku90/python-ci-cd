@@ -17,6 +17,9 @@ on:
 
 jobs:
   deploy-qa:
+    permissions:
+      id-token: write
+      contents: read
     uses: ./.github/workflows/deploy-template.yml
     with:
       environment: qa

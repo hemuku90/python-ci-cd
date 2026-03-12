@@ -32,9 +32,13 @@ on:
         type: string
         required: true
 
-  # 3. Release promotion triggers
+# 3. Release promotion triggers
   push:
     branches: ['release/*', main]
+
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   resolve-env:

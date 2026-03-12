@@ -24,6 +24,8 @@ jobs:
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.prep.outputs.tag_name }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -83,17 +85,142 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
-      - name: Initiate Cascade (Dev Manifest Update)
+  prep-dev:
+    name: Prep Dev
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Update Dev Manifest
         run: |
-          TAG="${{ steps.prep.outputs.tag_name }}"
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
           MANIFEST=".github/deployments/dev-tags.yml"
-          
-          echo "Initiating cascade for $TAG in $MANIFEST"
           sed -i "s/tag:.*/tag: $TAG/" $MANIFEST
-          
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add $MANIFEST
-          git commit -m "chore(ops): initiate cascade for $TAG [skip ci]" || echo "No changes to commit"
+          git commit -m "chore(ops): update dev to $TAG [skip ci]" || echo "No changes"
           git pull --rebase origin main
           git push origin main
+
+  deploy-dev:
+    name: Deploy to Dev
+    needs: [build-and-push, prep-dev]
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: dev
+      image_tag: "hemant1/gist-api:${{ needs.build-and-push.outputs.tag_name }}"
+      mock_mode: true
+      cluster_name: "eks-dev-cluster"
+      namespace: "gist-api-dev"
+      aws_account_id: "111111111111"
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets: inherit
+
+  prep-qa:
+    name: Prep QA
+    needs: [build-and-push, deploy-dev]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Update QA Manifest
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          MANIFEST=".github/deployments/qa-tags.yml"
+          sed -i "s/tag:.*/tag: $TAG/" $MANIFEST
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add $MANIFEST
+          git commit -m "chore(ops): update qa to $TAG [skip ci]" || echo "No changes"
+          git pull --rebase origin main
+          git push origin main
+
+  deploy-qa:
+    name: Deploy to QA
+    needs: [build-and-push, prep-qa]
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: qa
+      image_tag: "hemant1/gist-api:${{ needs.build-and-push.outputs.tag_name }}"
+      mock_mode: true
+      cluster_name: "eks-qa-cluster"
+      namespace: "gist-api-qa"
+      aws_account_id: "111111111111"
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets: inherit
+
+  prep-staging:
+    name: Prep Staging
+    needs: [build-and-push, deploy-qa]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Update Staging Manifest
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          MANIFEST=".github/deployments/staging-tags.yml"
+          sed -i "s/tag:.*/tag: $TAG/" $MANIFEST
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add $MANIFEST
+          git commit -m "chore(ops): update staging to $TAG [skip ci]" || echo "No changes"
+          git pull --rebase origin main
+          git push origin main
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [build-and-push, prep-staging]
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: staging
+      image_tag: "hemant1/gist-api:${{ needs.build-and-push.outputs.tag_name }}"
+      mock_mode: true
+      cluster_name: "eks-staging-cluster"
+      namespace: "gist-api-staging"
+      aws_account_id: "111111111111"
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets: inherit
+
+  prep-prod:
+    name: Prep Prod
+    needs: [build-and-push, deploy-staging]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Update Prod Manifest
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          MANIFEST=".github/deployments/prod-tags.yml"
+          sed -i "s/tag:.*/tag: $TAG/" $MANIFEST
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add $MANIFEST
+          git commit -m "chore(ops): update prod to $TAG [skip ci]" || echo "No changes"
+          git pull --rebase origin main
+          git push origin main
+
+  deploy-prod:
+    name: Deploy to Production
+    needs: [build-and-push, prep-prod]
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: prod
+      image_tag: "hemant1/gist-api:${{ needs.build-and-push.outputs.tag_name }}"
+      mock_mode: true
+      cluster_name: "eks-prod-cluster"
+      namespace: "gist-api-prod"
+      aws_account_id: "111111111111"
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets: inherit

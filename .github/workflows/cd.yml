@@ -12,7 +12,7 @@ on:
   workflow_run:
     workflows: ["Build Image"]
     types: [completed]
-    branches: [develop, 'feature/*']
+    branches: [develop]
   
   # 2. Deploy to Staging, UAT, and Prod on push to release or main
   push:

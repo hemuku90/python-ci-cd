@@ -53,7 +53,7 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "env_list=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+          elif [[ "${{ inputs.environment }}" != "" ]]; then
             echo "env_list=[\"${{ inputs.environment }}\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" =~ refs/heads/release/.* ]]; then
             echo "env_list=[\"staging\", \"uat\"]" >> $GITHUB_OUTPUT
@@ -66,7 +66,7 @@ jobs:
       - name: Resolve Short SHA
         id: set-tag
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+          if [[ "${{ inputs.short_sha }}" != "" ]]; then
             SHORT_SHA="${{ inputs.short_sha }}"
           elif [[ "${{ github.event.inputs.short_sha }}" != "" ]]; then
             SHORT_SHA="${{ github.event.inputs.short_sha }}"

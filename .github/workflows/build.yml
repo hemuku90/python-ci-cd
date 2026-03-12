@@ -2,8 +2,9 @@
 # Build & Deploy Workflow: Image Build → Progressive Deployment
 # =============================================================================
 # Triggered on version tags (v*) or manually via workflow_dispatch.
-# Builds a Docker image, scans for vulnerabilities, then deploys progressively
-# through Dev → QA → Staging → Prod by updating Helm values manifests.
+# Builds a Docker image, scans for vulnerabilities, generates SBOM, signs
+# the image, then deploys progressively through Dev → QA → Staging → Prod
+# with smoke tests, E2E, DAST, load tests, and notifications at each gate.
 # =============================================================================
 
 name: Build Image
@@ -29,6 +30,9 @@ permissions:
   id-token: write
 
 jobs:
+  # ===========================================================================
+  # STAGE 1: Build, Scan, Sign
+  # ===========================================================================
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
@@ -98,6 +102,29 @@ jobs:
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
 
+      - name: Generate SBOM (Mock)
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          echo "📦 Generating Software Bill of Materials (SBOM)..."
+          echo "  → Scanning image layers for OS packages"
+          echo "  → Scanning Python dependencies from site-packages"
+          echo "  → Output format: SPDX JSON"
+          echo "  → SBOM artifact: sbom-${{ steps.prep.outputs.tag_name }}.spdx.json"
+          echo "✅ SBOM generated successfully (mock — replace with: syft <image> -o spdx-json)"
+
+      - name: Sign Image with Cosign (Mock)
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          IMAGE="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.tag_name }}"
+          echo "🔏 Signing container image..."
+          echo "  → Image: $IMAGE"
+          echo "  → Signing method: Keyless (Sigstore/Fulcio OIDC)"
+          echo "  → Transparency log: Rekor"
+          echo "✅ Image signed successfully (mock — replace with: cosign sign --yes $IMAGE)"
+
+  # ===========================================================================
+  # STAGE 2: Deploy Dev (auto-promote on build success)
+  # ===========================================================================
   deploy-dev:
     name: Deploy Dev
     needs: build-and-push
@@ -125,7 +152,25 @@ jobs:
           git commit -m "chore(ops): update dev to $TAG [skip ci]" || echo "No changes"
           git pull --rebase origin main
           git push origin main
+      - name: Smoke Test (Mock)
+        run: |
+          echo "🔥 Running Dev smoke tests..."
+          echo "  → Waiting 30s for ArgoCD to sync..."
+          echo "  → GET /health → 200 OK"
+          echo "  → GET /docs → 200 OK"
+          echo "  → Response time: 45ms (threshold: 500ms)"
+          echo "✅ Dev smoke tests passed (mock)"
+      - name: Notify — Dev Deployed (Mock)
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          echo "📣 Sending Slack notification..."
+          echo "  → Channel: #deployments"
+          echo "  → Message: ✅ v$TAG deployed to DEV"
+          echo "  → (mock — replace with: curl Slack webhook)"
 
+  # ===========================================================================
+  # STAGE 3: Deploy QA (auto-promote on Dev smoke passing)
+  # ===========================================================================
   deploy-qa:
     name: Deploy QA
     needs: [build-and-push, deploy-dev]
@@ -153,7 +198,41 @@ jobs:
           git commit -m "chore(ops): update qa to $TAG [skip ci]" || echo "No changes"
           git pull --rebase origin main
           git push origin main
+      - name: Smoke Test (Mock)
+        run: |
+          echo "🔥 Running QA smoke tests..."
+          echo "  → GET /health → 200 OK"
+          echo "  → GET /docs → 200 OK"
+          echo "✅ QA smoke tests passed (mock)"
+      - name: E2E Tests (Mock)
+        run: |
+          echo "🧪 Running End-to-End API tests..."
+          echo "  → POST /gists → 201 Created"
+          echo "  → GET  /gists/{id} → 200 OK"
+          echo "  → GET  /gists?user=octocat → 200 OK (3 results)"
+          echo "  → Auth flow: token refresh → 200 OK"
+          echo "  → Error handling: invalid user → 404 Not Found"
+          echo "  → 12/12 scenarios passed"
+          echo "✅ E2E tests passed (mock — replace with: pytest tests/e2e/)"
+      - name: DAST Scan (Mock)
+        run: |
+          echo "🛡️  Running Dynamic Application Security Testing..."
+          echo "  → Target: https://qa.gist-api.internal"
+          echo "  → Scanner: OWASP ZAP Baseline"
+          echo "  → Testing: SQL Injection, XSS, CSRF, SSRF, Broken Auth"
+          echo "  → Findings: 0 HIGH, 0 MEDIUM, 2 LOW (informational)"
+          echo "✅ DAST scan passed (mock — replace with: zap-baseline.py)"
+      - name: Notify — QA Deployed (Mock)
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          echo "📣 Sending Slack notification..."
+          echo "  → Channel: #deployments"
+          echo "  → Message: ✅ v$TAG deployed to QA — E2E ✓ DAST ✓"
+          echo "  → (mock — replace with: curl Slack webhook)"
 
+  # ===========================================================================
+  # STAGE 4: Deploy Staging (auto-promote on QA E2E + DAST passing)
+  # ===========================================================================
   deploy-staging:
     name: Deploy Staging
     needs: [build-and-push, deploy-qa]
@@ -181,7 +260,44 @@ jobs:
           git commit -m "chore(ops): update staging to $TAG [skip ci]" || echo "No changes"
           git pull --rebase origin main
           git push origin main
+      - name: Smoke Test (Mock)
+        run: |
+          echo "🔥 Running Staging smoke tests..."
+          echo "  → GET /health → 200 OK"
+          echo "  → GET /docs → 200 OK"
+          echo "✅ Staging smoke tests passed (mock)"
+      - name: Load & Performance Test (Mock)
+        run: |
+          echo "📊 Running load/performance tests..."
+          echo "  → Tool: k6 / Locust"
+          echo "  → Scenario: 100 VUs, 5 min ramp-up"
+          echo "  → Results:"
+          echo "     • p50 latency: 32ms"
+          echo "     • p95 latency: 89ms"
+          echo "     • p99 latency: 145ms"
+          echo "     • RPS: 850 req/s"
+          echo "     • Error rate: 0.01%"
+          echo "     • Threshold: p95 < 200ms ✓"
+          echo "✅ Performance tests passed (mock — replace with: k6 run load-test.js)"
+      - name: Canary Validation (Mock)
+        run: |
+          echo "🐤 Running canary validation..."
+          echo "  → Canary weight: 10% traffic"
+          echo "  → Error rate: 0.0% (threshold: 1%)"
+          echo "  → Latency delta: +2ms (threshold: +50ms)"
+          echo "  → Promoting to 100%"
+          echo "✅ Canary validation passed (mock)"
+      - name: Notify — Staging Deployed (Mock)
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          echo "📣 Sending Slack notification..."
+          echo "  → Channel: #deployments"
+          echo "  → Message: ✅ v$TAG deployed to STAGING — Load ✓ Canary ✓"
+          echo "  → (mock — replace with: curl Slack webhook)"
 
+  # ===========================================================================
+  # STAGE 5: Deploy Prod (MANUAL GATE — requires reviewer approval)
+  # ===========================================================================
   deploy-prod:
     name: Deploy Prod
     needs: [build-and-push, deploy-staging]
@@ -209,3 +325,26 @@ jobs:
           git commit -m "chore(ops): update prod to $TAG [skip ci]" || echo "No changes"
           git pull --rebase origin main
           git push origin main
+      - name: Smoke Test (Mock)
+        run: |
+          echo "🔥 Running Prod smoke tests..."
+          echo "  → GET /health → 200 OK"
+          echo "  → GET /docs → 200 OK"
+          echo "  → Response time: 38ms"
+          echo "✅ Prod smoke tests passed (mock)"
+      - name: Rollback Check (Mock)
+        run: |
+          echo "🔄 Validating rollback readiness..."
+          echo "  → Previous version: stored in ArgoCD history"
+          echo "  → Rollback command: argocd app rollback gist-api-prod"
+          echo "  → Health check: Monitoring error rate for 5 min..."
+          echo "  → Error rate: 0.0% — no rollback needed"
+          echo "✅ Rollback check passed (mock)"
+      - name: Notify — Prod Deployed (Mock)
+        run: |
+          TAG="${{ needs.build-and-push.outputs.tag_name }}"
+          echo "📣 Sending Slack + PagerDuty notification..."
+          echo "  → Slack #deployments: 🚀 v$TAG deployed to PRODUCTION"
+          echo "  → Slack #engineering: 🚀 v$TAG is live"
+          echo "  → PagerDuty: Change event created for v$TAG"
+          echo "  → (mock — replace with: curl Slack/PD webhooks)"

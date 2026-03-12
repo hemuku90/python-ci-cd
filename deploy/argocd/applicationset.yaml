@@ -21,7 +21,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: 'https://github.com/hemuku90/python-ci-cd.git'
+        repoURL: 'git@github.com:hemuku90/python-ci-cd.git'
         targetRevision: main
         path: deploy/helm/gist-api
         helm:

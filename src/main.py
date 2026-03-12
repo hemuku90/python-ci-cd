@@ -30,7 +30,7 @@ app = create_app()
 def run_server() -> None:
     """Entry point for running the uvicorn ASGI server."""
     settings = get_settings()
-    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, workers=4)
+    uvicorn.run("main:app", host="0.0.0.0", port=settings.port, workers=4)  # nosec B104 - required for Docker
 
 
 if __name__ == "__main__":

@@ -1,0 +1,39 @@
+# =============================================================================
+# Deployment Workflow: Dev
+# =============================================================================
+# Triggers on successful build.
+# =============================================================================
+
+name: Deploy Dev
+
+on:
+  workflow_call:
+    inputs:
+      short_sha:
+        type: string
+        required: true
+
+jobs:
+  deploy-dev:
+    name: Deploy to Dev
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: dev
+      image_tag: "hemant1/gist-api:development-${{ inputs.short_sha }}"
+      mock_mode: true
+      cluster_name: "eks-dev-cluster"
+      namespace: "gist-api-dev"
+      aws_account_id: "111111111111"
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets:
+      aws_role: "arn:aws:iam::111111111111:role/github-actions-eks-deploy"
+
+  trigger-qa:
+    name: Promote to QA
+    needs: deploy-dev
+    uses: ./.github/workflows/deploy-qa.yml
+    with:
+      short_sha: ${{ inputs.short_sha }}
+    secrets: inherit

@@ -43,9 +43,6 @@ on:
       image_name:
         type: string
         required: true
-    secrets:
-      aws_role:
-        required: true
 
 permissions:
   id-token: write

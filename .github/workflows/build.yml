@@ -1,10 +1,3 @@
-# =============================================================================
-# Build Workflow: Docker Image Creation (Build Once)
-# =============================================================================
-# Builds the canonical Docker image when code is merged into develop.
-# This image is then promoted/deployed across all environments.
-# =============================================================================
-
 name: Build Image
 
 on:
@@ -44,7 +37,6 @@ jobs:
             VERSION=${GITHUB_REF#refs/tags/v}
             TAG_NAME=$VERSION
           else
-            # Fallback for manual dispatch
             TAG_NAME="manual-$(date +%s)"
           fi
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
@@ -91,16 +83,22 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
+      - name: Ensure main is checked out and up to date
+        run: |
+          git fetch origin main
+          git checkout main
+          git pull origin main
+
       - name: Initiate Cascade (Update Dev Manifest)
         run: |
           TAG="${{ steps.prep.outputs.tag_name }}"
           MANIFEST=".github/deployments/dev-tags.yml"
-          
+
           echo "Initiating cascade: Updating $MANIFEST to tag $TAG"
           sed -i "s/tag:.*/tag: $TAG/" $MANIFEST
-          
+
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add $MANIFEST
-          git commit -m "chore(ops): initiate cascade for $TAG [skip ci]"
+          git commit -m "chore(ops): initiate cascade for $TAG [skip ci]" || echo "No changes to commit"
           git push origin main

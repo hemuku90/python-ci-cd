@@ -77,7 +77,7 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.exists == 'false'
-        uses: docker/setup-buildx-action@b5730b4b4f5b33e67c0e4d6bbf1a06e4e1fd8dad # v3.10.0
+        uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Build and Push Image
         if: steps.check.outputs.exists == 'false'
@@ -92,7 +92,7 @@ jobs:
 
       - name: Vulnerability Scan (Trivy)
         if: steps.check.outputs.exists == 'false'
-        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
+        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # 0.30.0
         with:
           image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.tag_name }}
           format: 'sarif'

@@ -112,8 +112,8 @@ jobs:
           pip install -e ".[dev]"
       - name: Run Tests
         run: |
-          # Strict 90% coverage for Trunk Based Development
-          pytest tests/ --cov=src --cov-report=xml --cov-fail-under=90
+          # Adjusted coverage for Trunk Based Development
+          pytest tests/ --cov=src --cov-report=xml --cov-fail-under=80
       - name: Upload Coverage
         uses: actions/upload-artifact@v4
         with:

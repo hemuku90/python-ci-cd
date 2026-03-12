@@ -1,3 +1,11 @@
+# =============================================================================
+# Build & Deploy Workflow: Image Build → Progressive Deployment
+# =============================================================================
+# Triggered on version tags (v*) or manually via workflow_dispatch.
+# Builds a Docker image, scans for vulnerabilities, then deploys progressively
+# through Dev → QA → Staging → Prod by updating Helm values manifests.
+# =============================================================================
+
 name: Build Image
 
 on:
@@ -15,22 +23,28 @@ env:
   IMAGE_NAME: 'gist-api'
   DOCKER_REGISTRY: 'hemant1'
 
+# Workflow-level default: minimal permissions. Jobs override as needed.
 permissions:
-  id-token: write
-  contents: write
+  contents: read
   security-events: write
+  id-token: write
 
 jobs:
   build-and-push:
     name: Build & Push
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
     outputs:
       tag_name: ${{ steps.prep.outputs.tag_name }}
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # Full history needed to resolve tag metadata
 
       - name: Prepare Metadata
         id: prep
@@ -44,7 +58,7 @@ jobs:
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
 
       - name: Login to DockerHub
-        uses: docker/login-action@v3
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -63,11 +77,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: steps.check.outputs.exists == 'false'
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@b5730b4b4f5b33e67c0e4d6bbf1a06e4e1fd8dad # v3.10.0
 
       - name: Build and Push Image
         if: steps.check.outputs.exists == 'false'
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@14487ce63c7a62a4a324b0bfb37086795e31c6c1 # v6.16.0
         with:
           context: .
           push: true
@@ -78,23 +92,35 @@ jobs:
 
       - name: Vulnerability Scan (Trivy)
         if: steps.check.outputs.exists == 'false'
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9bd0d8 # v0.30.0
         with:
           image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.tag_name }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
+      - name: Upload Trivy SARIF Results
+        if: steps.check.outputs.exists == 'false' && always()
+        uses: github/codeql-action/upload-sarif@ce28f5bb42b7a9f2c824e633a3f6ee835bab6858 # v3.28.9
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'trivy'
+
   deploy-dev:
     name: Deploy Dev
     needs: build-and-push
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: dev
+    permissions:
+      contents: write  # Required to push manifest changes
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 0  # Full history required for git push
       - name: Update Dev Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"
@@ -111,12 +137,17 @@ jobs:
     name: Deploy QA
     needs: [build-and-push, deploy-dev]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: qa
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 0  # Full history required for git push
       - name: Update QA Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"
@@ -133,12 +164,17 @@ jobs:
     name: Deploy Staging
     needs: [build-and-push, deploy-qa]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: staging
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 0  # Full history required for git push
       - name: Update Staging Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"
@@ -155,12 +191,17 @@ jobs:
     name: Deploy Prod
     needs: [build-and-push, deploy-staging]
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: production  # Must be configured in repo Settings → Environments with required reviewers
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: main
-          fetch-depth: 0
+          fetch-depth: 0  # Full history required for git push
       - name: Update Prod Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"

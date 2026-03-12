@@ -1,0 +1,74 @@
+# =============================================================================
+# Deployment Workflow: Staging
+# =============================================================================
+# Triggers on push to release/*.
+# Performs: Pull QA -> Tag Staging -> Push Staging -> Deploy Staging
+# =============================================================================
+
+name: Deploy Staging
+
+on:
+  push:
+    branches: ['release/*']
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  resolve-tag:
+    name: Resolve SHA
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.set-tag.outputs.short_sha }}
+    steps:
+      - name: Set Tag
+        id: set-tag
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+  promote-and-deploy:
+    name: Promote & Deploy Staging
+    needs: resolve-tag
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Pull, Tag, Push (Linear Promotion)
+        run: |
+          IMAGE_NAME="hemant1/gist-api"
+          SHA="${{ needs.resolve-tag.outputs.short_sha }}"
+          # Explicitly pulling from QA (the previous environment)
+          docker pull $IMAGE_NAME:qa-$SHA
+          docker tag $IMAGE_NAME:qa-$SHA $IMAGE_NAME:staging-$SHA
+          docker push $IMAGE_NAME:staging-$SHA
+
+  deploy-staging:
+    name: Deploy to Staging
+    needs: [resolve-tag, promote-and-deploy]
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: staging
+      image_tag: "hemant1/gist-api:staging-${{ needs.resolve-tag.outputs.short_sha }}"
+      mock_mode: true
+      cluster_name: "eks-staging-cluster"
+      namespace: "gist-api-staging"
+      aws_account_id: "111111111111"
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets:
+      aws_role: "arn:aws:iam::111111111111:role/github-actions-eks-deploy"
+
+  trigger-uat:
+    name: Promote to UAT
+    needs: [resolve-tag, deploy-staging]
+    uses: ./.github/workflows/deploy-uat.yml
+    with:
+      short_sha: ${{ needs.resolve-tag.outputs.short_sha }}
+    secrets: inherit

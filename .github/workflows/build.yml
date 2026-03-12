@@ -9,7 +9,10 @@ name: Build Image
 
 on:
   push:
-    branches: [develop]
+    branches:
+      - develop
+      - 'release/*'
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -78,12 +81,11 @@ jobs:
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
-  deploy-dev:
-    name: Auto-Deploy to Dev
+  deploy-auto:
+    name: Trigger Auto-Deployment
     needs: build-and-push
-    # Allow auto-deploy on develop or feature branches (for testing)
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/feature/'))
+    # Auto-deploy on develop, release/*, or main
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/release/') || github.ref == 'refs/heads/main')
     uses: ./.github/workflows/cd.yml
     with:
-      environment: dev
       short_sha: ${{ needs.build-and-push.outputs.short_sha }}

@@ -8,7 +8,7 @@
 name: CD
 
 on:
-  # 1. Manual trigger (for QA promotion)
+  # 1. Manual trigger (for QA promotion or selective re-deploy)
   workflow_dispatch:
     inputs:
       environment:
@@ -22,21 +22,15 @@ on:
         required: false
         type: string
 
-  # 2. Reusable trigger (called by Build Image for auto-deploy)
+  # 2. Reusable trigger (called by Build Image for orchestration)
   workflow_call:
     inputs:
       environment:
         type: string
-        required: true
+        required: false # If empty, will be resolved from branch
       short_sha:
         type: string
         required: true
-
-  # 3. Release promotion triggers
-  push:
-    branches:
-      - 'release/*'
-      - 'main'
 
 permissions:
   id-token: write
@@ -57,6 +51,8 @@ jobs:
             echo "env_list=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ inputs.environment }}" != "" ]]; then
             echo "env_list=[\"${{ inputs.environment }}\"]" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "env_list=[\"dev\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" =~ refs/heads/release/.* ]]; then
             echo "env_list=[\"staging\", \"uat\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then

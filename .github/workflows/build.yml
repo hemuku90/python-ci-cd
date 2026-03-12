@@ -92,7 +92,7 @@ jobs:
 
       - name: Vulnerability Scan (Trivy)
         if: steps.check.outputs.exists == 'false'
-        uses: aquasecurity/trivy-action@0.33.1 # 0.30.0
+        uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.tag_name }}
           format: 'sarif'

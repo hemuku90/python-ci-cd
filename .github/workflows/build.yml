@@ -22,6 +22,7 @@ env:
   ARTIFACT_RETENTION_DAYS: 30
 
 permissions:
+  id-token: write
   contents: read
   packages: write
   security-events: write

@@ -9,8 +9,10 @@ name: CI
 
 on:
   pull_request:
-    branches: [develop, main, 'release/*']
+    branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
   # Allows manual validation
   workflow_dispatch:
 
@@ -51,20 +53,14 @@ jobs:
   security-sast:
     name: SAST Scan (Bandit)
     runs-on: ubuntu-latest
-    # Run SAST on all production-path branches
-    if: github.base_ref == 'develop' || startsWith(github.base_ref, 'release/') || github.base_ref == 'main'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
       - name: Run Bandit
         run: |
           pip install bandit bandit-sarif-formatter
-          # Fail on HIGH for develop, fail on MEDIUM/HIGH for release/main
-          if [[ "${{ github.base_ref }}" == "develop" ]]; then
-            bandit -r src/ -f sarif -o bandit-results.sarif -lll --exclude tests/,venv/
-          else
-            bandit -r src/ -f sarif -o bandit-results.sarif -ll --exclude tests/,venv/
-          fi
+          # Fail on MEDIUM/HIGH for Trunk
+          bandit -r src/ -f sarif -o bandit-results.sarif -ll --exclude tests/,venv/
       - name: Upload SAST Results
         uses: github/codeql-action/upload-sarif@v3
         if: always()
@@ -88,8 +84,6 @@ jobs:
   dependency-scan:
     name: Dependency Scan
     runs-on: ubuntu-latest
-    # Run Dependency scan on production-path branches
-    if: github.base_ref == 'develop' || startsWith(github.base_ref, 'release/') || github.base_ref == 'main'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -118,13 +112,8 @@ jobs:
           pip install -e ".[dev]"
       - name: Run Tests
         run: |
-          # Differentiate coverage requirements
-          if [[ "${{ github.base_ref }}" == "develop" ]]; then
-            THRESHOLD=80
-          else
-            THRESHOLD=90
-          fi
-          pytest tests/ --cov=src --cov-report=xml --cov-fail-under=$THRESHOLD
+          # Strict 90% coverage for Trunk Based Development
+          pytest tests/ --cov=src --cov-report=xml --cov-fail-under=90
       - name: Upload Coverage
         uses: actions/upload-artifact@v4
         with:

@@ -69,21 +69,20 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Run Security Scan on the newly built image
       - name: Vulnerability Scan (Trivy)
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref: ${{ steps.prep.outputs.image_tag }}
+          image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${{ steps.prep.outputs.short_sha }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
 
-      - name: Save Image Tag Artifact
-        run: echo "${{ steps.prep.outputs.image_tag }}" > image-tag.txt
-
-      - name: Upload Image Info
-        uses: actions/upload-artifact@v4
-        with:
-          name: image-info
-          path: image-tag.txt
-          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
+  deploy-dev:
+    name: Auto-Deploy to Dev
+    needs: build-and-push
+    # Allow auto-deploy on develop or feature branches (for testing)
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/develop' || startsWith(github.ref, 'refs/heads/feature/'))
+    uses: ./.github/workflows/cd.yml
+    with:
+      environment: dev
+      short_sha: ${{ needs.build-and-push.outputs.short_sha }}

@@ -1,64 +1,48 @@
 # =============================================================================
-# Image Build Workflow
+# Build Workflow: Docker Image Creation (Build Once)
 # =============================================================================
-# Builds and pushes Docker image to DockerHub
-# Generates SBOM, signs image with Cosign, and runs vulnerability scan
+# Builds the canonical Docker image when code is merged into develop.
+# This image is then promoted/deployed across all environments.
 # =============================================================================
 
-name: Build & Sign Image
+name: Build Image
 
 on:
   push:
-    branches: [develop, 'release/*', main, 'hotfix/*']
-    tags:
-      - 'v*'
-  # Allow manual trigger
+    branches: [develop]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Git ref to build'
-        required: true
-        default: develop
-        type: string
 
-# Cancel in-progress runs for same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  PYTHON_VERSION: '3.12'
   IMAGE_NAME: 'gist-api'
   DOCKER_REGISTRY: 'hemant1'
-  AWS_REGION: 'eu-west-1'
   ARTIFACT_RETENTION_DAYS: 30
-  # Mock mode flag
-  MOCK_MODE: 'true'
 
 permissions:
-  id-token: write
   contents: read
-  security-events: write
   packages: write
+  security-events: write
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Job 1: Build and Push Docker Image to DockerHub
-  # ---------------------------------------------------------------------------
   build-and-push:
-    name: Build & Push Image
+    name: Build & Push
     runs-on: ubuntu-latest
     outputs:
-      image-digest: ${{ steps.build-image.outputs.digest }}
-      image-tag: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}
+      image_tag: ${{ steps.prep.outputs.image_tag }}
     steps:
-      - name: Extract Short SHA
-        id: extract_sha
-        run: echo "short_sha=$(echo ${{ github.sha }} | cut -c1-8)" >> $GITHUB_OUTPUT
       - name: Checkout Code
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.inputs.ref || github.ref }}
+
+      - name: Prepare Image Tag
+        id: prep
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          TAG="${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:sha-${SHORT_SHA}"
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_ENV
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -69,205 +53,32 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract Metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha
-            type=raw,value=latest,enable={{is_default_branch}}
-
       - name: Build and Push Image
-        id: build-image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}
-            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-          labels: |
-            org.opencontainers.image.source=${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+            ${{ steps.prep.outputs.image_tag }}
+            ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:develop-latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Store image info for downstream jobs
-      - name: Save Image Info
-        run: |
-          echo "${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.extract_sha.outputs.short_sha }}" > image-tag.txt
-          echo "${{ steps.build-image.outputs.digest }}" > image-digest.txt
+      # Run Security Scan on the newly built image
+      - name: Vulnerability Scan (Trivy)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ steps.prep.outputs.image_tag }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Save Image Tag Artifact
+        run: echo "${{ steps.prep.outputs.image_tag }}" > image-tag.txt
 
       - name: Upload Image Info
         uses: actions/upload-artifact@v4
         with:
           name: image-info
-          path: |
-            image-tag.txt
-            image-digest.txt
+          path: image-tag.txt
           retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
-
-  # ---------------------------------------------------------------------------
-  # Job 2: Generate SBOM (Mock)
-  # ---------------------------------------------------------------------------
-  generate-sbom:
-    name: Generate SBOM
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Download Image Info
-        uses: actions/download-artifact@v4
-        with:
-          name: image-info
-          path: .
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Read Image Tag
-        id: image
-        run: |
-          IMAGE_TAG=$(cat image-tag.txt)
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      # Generate SBOM using Anchore Syft
-      - name: Generate SBOM (Anchore Syft)
-        uses: anchore/sbom-action@v0
-        with:
-          image: ${{ steps.image.outputs.tag }}
-          format: spdx-json
-          output-file: sbom.json
-
-      - name: Upload SBOM
-        uses: actions/upload-artifact@v4
-        with:
-          name: sbom-artifact
-          path: sbom.json
-          retention-days: ${{ env.ARTIFACT_RETENTION_DAYS }}
-
-  # ---------------------------------------------------------------------------
-  # Job 3: Sign Container Image (Mock)
-  # ---------------------------------------------------------------------------
-
-  # ---------------------------------------------------------------------------
-  # Job 4: Vulnerability Scan
-  # ---------------------------------------------------------------------------
-  vuln-scan:
-    name: Vulnerability Scan
-    runs-on: ubuntu-latest
-    needs: build-and-push
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Download Image Info
-        uses: actions/download-artifact@v4
-        with:
-          name: image-info
-          path: .
-
-      - name: Login to DockerHub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Read Image Tag
-        id: image
-        run: |
-          IMAGE_TAG=$(cat image-tag.txt)
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      # Run Trivy Scanner
-      - name: Run Trivy Scanner
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: ${{ steps.image.outputs.tag }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH,MEDIUM'
-
-  # ---------------------------------------------------------------------------
-  # Job 5: Create Git Tag (for releases)
-  # ---------------------------------------------------------------------------
-  create-tag:
-    name: Create Release Tag
-    runs-on: ubuntu-latest
-    needs: [build-and-push, vuln-scan]
-    if: startsWith(github.ref, 'refs/heads/main') || startsWith(github.ref, 'refs/heads/release/')
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Download Image Info
-        uses: actions/download-artifact@v4
-        with:
-          name: image-info
-          path: .
-
-      - name: Read Image Tag
-        id: image
-        run: |
-          IMAGE_TAG=$(cat image-tag.txt)
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-      - name: Create Git Tag
-        run: |
-          TAG_NAME="v$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-8)"
-          git tag -a $TAG_NAME -m "Release $TAG_NAME - Image: ${{ steps.image.outputs.tag }}"
-          git push origin $TAG_NAME
-
-      - name: Create GitHub Release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG_NAME="v$(date +%Y%m%d)-$(echo ${{ github.sha }} | cut -c1-8)"
-          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "release_name=Release $TAG_NAME" >> $GITHUB_OUTPUT
-
-  # ---------------------------------------------------------------------------
-  # Job 6: Notify - Build Complete
-  # ---------------------------------------------------------------------------
-  notify:
-    name: Notify Build Complete
-    needs: [build-and-push, vuln-scan]
-    if: always()
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download Image Info
-        uses: actions/download-artifact@v4
-        with:
-          name: image-info
-          path: .
-        continue-on-error: true
-
-      - name: Summary
-        run: |
-          echo "## Build Summary (MOCK MODE)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Build & Push | ${{ needs.build-and-push.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| SBOM Generation | ${{ needs.generate-sbom.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Image Signing | (removed) |" >> $GITHUB_STEP_SUMMARY
-          echo "| Vulnerability Scan | ${{ needs.vuln-scan.result }} |" >> $GITHUB_STEP_SUMMARY
-
-          if [ -f image-tag.txt ]; then
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "**Image:** $(cat image-tag.txt)" >> $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "---" >> $GITHUB_STEP_SUMMARY
-          echo "**Note:** This run was executed in MOCK MODE - no actual AWS resources were used." >> $GITHUB_STEP_SUMMARY

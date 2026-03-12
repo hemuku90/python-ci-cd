@@ -1,0 +1,87 @@
+# =============================================================================
+# CD Workflow: Continuous Deployment (Deploy Everywhere)
+# =============================================================================
+# Deploys the canonical image to various environments based on branch.
+# Environments: dev, qa, staging, uat, prod
+# =============================================================================
+
+name: CD
+
+on:
+  # 1. Auto-deploy to Dev & QA after Build completes on develop
+  workflow_run:
+    workflows: ["Build Image"]
+    types: [completed]
+    branches: [develop]
+  
+  # 2. Deploy to Staging, UAT, and Prod on push to release or main
+  push:
+    branches: ['release/*', main]
+
+  # 4. Manual trigger
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'dev'
+        type: choice
+        options: [dev, qa, staging, uat, prod]
+      image_tag:
+        description: 'Override image tag (optional)'
+        required: false
+        type: string
+
+jobs:
+  resolve-env:
+    name: Resolve Target Environment
+    runs-on: ubuntu-latest
+    outputs:
+      env_list: ${{ steps.set-env.outputs.env_list }}
+      image_tag: ${{ steps.set-tag.outputs.image_tag }}
+    steps:
+      - name: Set Environment List
+        id: set-env
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "env_list=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+            echo "env_list=[\"dev\", \"qa\"]" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" =~ refs/heads/release/.* ]]; then
+            echo "env_list=[\"staging\", \"uat\"]" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "env_list=[\"prod\"]" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Resolve Image Tag
+        id: set-tag
+        run: |
+          if [[ "${{ github.event.inputs.image_tag }}" != "" ]]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+          else
+            # Default to the SHA of the current commit
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+            TAG="hemant1/gist-api:sha-${SHORT_SHA}"
+          fi
+          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+
+  deploy:
+    name: Deploy to ${{ matrix.environment }}
+    needs: resolve-env
+    strategy:
+      matrix:
+        environment: ${{ fromJson(needs.resolve-env.outputs.env_list) }}
+      max-parallel: 1
+    uses: ./.github/workflows/deploy-template.yml
+    with:
+      environment: ${{ matrix.environment }}
+      image_tag: ${{ needs.resolve-env.outputs.image_tag }}
+      mock_mode: true
+      cluster_name: "eks-${{ matrix.environment }}-cluster"
+      namespace: "gist-api-${{ matrix.environment }}"
+      aws_account_id: "111111111111" # Mock Account ID
+      aws_region: "eu-west-1"
+      docker_registry: "hemant1"
+      image_name: "gist-api"
+    secrets:
+      aws_role: "arn:aws:iam::111111111111:role/github-actions-eks-deploy"

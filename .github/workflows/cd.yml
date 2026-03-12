@@ -8,17 +8,17 @@
 name: CD
 
 on:
-  # 1. Auto-deploy to Dev & QA after Build completes on develop
+  # 1. Auto-deploy to Dev & QA after Build completes
   workflow_run:
     workflows: ["Build Image"]
     types: [completed]
-    branches: [develop]
+    branches: [develop, 'feature/*']
   
   # 2. Deploy to Staging, UAT, and Prod on push to release or main
   push:
     branches: ['release/*', main]
 
-  # 4. Manual trigger
+  # 3. Manual trigger
   workflow_dispatch:
     inputs:
       environment:
@@ -36,16 +36,17 @@ jobs:
   resolve-env:
     name: Resolve Target Environment
     runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       env_list: ${{ steps.set-env.outputs.env_list }}
-      image_tag: ${{ steps.set-tag.outputs.image_tag }}
+      short_sha: ${{ steps.set-tag.outputs.short_sha }}
     steps:
       - name: Set Environment List
         id: set-env
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "env_list=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" ]]; then
+          elif [[ "${{ github.ref }}" == "refs/heads/develop" || "${{ github.ref }}" =~ refs/heads/feature/.* ]]; then
             echo "env_list=[\"dev\", \"qa\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" =~ refs/heads/release/.* ]]; then
             echo "env_list=[\"staging\", \"uat\"]" >> $GITHUB_OUTPUT
@@ -53,17 +54,16 @@ jobs:
             echo "env_list=[\"prod\"]" >> $GITHUB_OUTPUT
           fi
 
-      - name: Resolve Image Tag
+      - name: Resolve Short SHA
         id: set-tag
         run: |
-          if [[ "${{ github.event.inputs.image_tag }}" != "" ]]; then
-            TAG="${{ github.event.inputs.image_tag }}"
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            SHA="${{ github.event.workflow_run.head_sha }}"
           else
-            # Default to the SHA of the current commit
-            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
-            TAG="hemant1/gist-api:sha-${SHORT_SHA}"
+            SHA="${{ github.sha }}"
           fi
-          echo "image_tag=$TAG" >> $GITHUB_OUTPUT
+          SHORT_SHA=$(echo $SHA | cut -c1-8)
+          echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
 
   deploy:
     name: Deploy to ${{ matrix.environment }}
@@ -75,7 +75,8 @@ jobs:
     uses: ./.github/workflows/deploy-template.yml
     with:
       environment: ${{ matrix.environment }}
-      image_tag: ${{ needs.resolve-env.outputs.image_tag }}
+      # Use descriptive tags based on environment
+      image_tag: "hemant1/gist-api:${{ matrix.environment == 'dev' && 'development' || matrix.environment }}-${{ needs.resolve-env.outputs.short_sha }}"
       mock_mode: true
       cluster_name: "eks-${{ matrix.environment }}-cluster"
       namespace: "gist-api-${{ matrix.environment }}"

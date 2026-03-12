@@ -92,6 +92,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - name: Update Dev Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"
@@ -127,6 +130,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - name: Update QA Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"
@@ -162,6 +168,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - name: Update Staging Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"
@@ -197,6 +206,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
       - name: Update Prod Manifest
         run: |
           TAG="${{ needs.build-and-push.outputs.tag_name }}"

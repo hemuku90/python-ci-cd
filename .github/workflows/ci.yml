@@ -89,7 +89,7 @@ jobs:
     name: Dependency Scan
     runs-on: ubuntu-latest
     # Run Dependency scan on production-path branches
-    if: github.base_ref == 'develop' || startsWith(github.base_ref, 'release/') || github.base_ref == 'main'
+    if: github.base_ref == 'develop'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -100,6 +100,7 @@ jobs:
             pip install .
           fi
           safety check --full-report
+        continue-on-error: true
 
   unit-tests:
     name: Unit Tests

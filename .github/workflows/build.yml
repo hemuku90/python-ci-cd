@@ -26,7 +26,6 @@ env:
 # Workflow-level default: minimal permissions. Jobs override as needed.
 permissions:
   contents: read
-  security-events: write
   id-token: write
 
 jobs:
@@ -36,7 +35,6 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
-      security-events: write
       id-token: write
     outputs:
       tag_name: ${{ steps.prep.outputs.tag_name }}
@@ -96,17 +94,9 @@ jobs:
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.tag_name }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: 'table'
           severity: 'CRITICAL,HIGH'
           ignore-unfixed: true
-
-      - name: Upload Trivy SARIF Results
-        if: steps.check.outputs.exists == 'false' && always()
-        uses: github/codeql-action/upload-sarif@ce28f5bb42b7a9f2c824e633a3f6ee835bab6858 # v3.28.9
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: 'trivy'
 
   deploy-dev:
     name: Deploy Dev

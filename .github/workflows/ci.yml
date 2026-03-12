@@ -111,7 +111,7 @@ jobs:
             pip install .
           fi
           safety check --full-report
-        continue-on-error: true
+        continue-on-error: true # for now we are ignoring the dependency vulnerabilities
 
   unit-tests:
     name: Unit Tests

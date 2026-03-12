@@ -46,12 +46,20 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "env_list=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.ref }}" == "refs/heads/develop" || "${{ github.ref }}" =~ refs/heads/feature/.* ]]; then
-            echo "env_list=[\"dev\", \"qa\"]" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            # workflow_run context
+            BRANCH="${{ github.event.workflow_run.head_branch }}"
+            if [[ "$BRANCH" == "develop" ]]; then
+              echo "env_list=[\"dev\"]" >> $GITHUB_OUTPUT
+            else
+              echo "env_list=[]" >> $GITHUB_OUTPUT
+            fi
           elif [[ "${{ github.ref }}" =~ refs/heads/release/.* ]]; then
             echo "env_list=[\"staging\", \"uat\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
             echo "env_list=[\"prod\"]" >> $GITHUB_OUTPUT
+          else
+            echo "env_list=[]" >> $GITHUB_OUTPUT
           fi
 
       - name: Resolve Short SHA

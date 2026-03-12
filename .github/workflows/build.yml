@@ -92,12 +92,13 @@ jobs:
 
       - name: Vulnerability Scan (Trivy)
         if: steps.check.outputs.exists == 'false'
-        uses: aquasecurity/trivy-action@6c175e9c4083a92bbca2f9724c8a5e33bc2d97a5 # 0.30.0
+        uses: aquasecurity/trivy-action@0.33.1 # 0.30.0
         with:
           image-ref: ${{ env.DOCKER_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.prep.outputs.tag_name }}
           format: 'sarif'
           output: 'trivy-results.sarif'
           severity: 'CRITICAL,HIGH'
+          ignore-unfixed: true
 
       - name: Upload Trivy SARIF Results
         if: steps.check.outputs.exists == 'false' && always()

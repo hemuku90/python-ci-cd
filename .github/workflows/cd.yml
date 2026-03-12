@@ -8,17 +8,7 @@
 name: CD
 
 on:
-  # 1. Auto-deploy to Dev & QA after Build completes
-  workflow_run:
-    workflows: ["Build Image"]
-    types: [completed]
-    branches: [develop]
-  
-  # 2. Deploy to Staging, UAT, and Prod on push to release or main
-  push:
-    branches: ['release/*', main]
-
-  # 3. Manual trigger
+  # 1. Manual trigger (for QA promotion)
   workflow_dispatch:
     inputs:
       environment:
@@ -27,16 +17,29 @@ on:
         default: 'dev'
         type: choice
         options: [dev, qa, staging, uat, prod]
-      image_tag:
-        description: 'Override image tag (optional)'
+      short_sha:
+        description: 'Short SHA to deploy (optional)'
         required: false
         type: string
+
+  # 2. Reusable trigger (called by Build Image for auto-deploy)
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      short_sha:
+        type: string
+        required: true
+
+  # 3. Release promotion triggers
+  push:
+    branches: ['release/*', main]
 
 jobs:
   resolve-env:
     name: Resolve Target Environment
     runs-on: ubuntu-latest
-    if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       env_list: ${{ steps.set-env.outputs.env_list }}
       short_sha: ${{ steps.set-tag.outputs.short_sha }}
@@ -46,14 +49,8 @@ jobs:
         run: |
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
             echo "env_list=[\"${{ github.event.inputs.environment }}\"]" >> $GITHUB_OUTPUT
-          elif [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            # workflow_run context
-            BRANCH="${{ github.event.workflow_run.head_branch }}"
-            if [[ "$BRANCH" == "develop" ]]; then
-              echo "env_list=[\"dev\"]" >> $GITHUB_OUTPUT
-            else
-              echo "env_list=[]" >> $GITHUB_OUTPUT
-            fi
+          elif [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+            echo "env_list=[\"${{ inputs.environment }}\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" =~ refs/heads/release/.* ]]; then
             echo "env_list=[\"staging\", \"uat\"]" >> $GITHUB_OUTPUT
           elif [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
@@ -65,12 +62,13 @@ jobs:
       - name: Resolve Short SHA
         id: set-tag
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
-            SHA="${{ github.event.workflow_run.head_sha }}"
+          if [[ "${{ github.event_name }}" == "workflow_call" ]]; then
+            SHORT_SHA="${{ inputs.short_sha }}"
+          elif [[ "${{ github.event.inputs.short_sha }}" != "" ]]; then
+            SHORT_SHA="${{ github.event.inputs.short_sha }}"
           else
-            SHA="${{ github.sha }}"
+            SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
           fi
-          SHORT_SHA=$(echo $SHA | cut -c1-8)
           echo "short_sha=$SHORT_SHA" >> $GITHUB_OUTPUT
 
   deploy:

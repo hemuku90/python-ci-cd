@@ -1,0 +1,39 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gist-api-environments
+  namespace: argocd
+spec:
+  generators:
+  - list:
+      elements:
+        - env: dev
+          namespace: gist-api-dev
+        - env: qa
+          namespace: gist-api-qa
+        - env: staging
+          namespace: gist-api-staging
+        - env: prod
+          namespace: gist-api-prod
+  template:
+    metadata:
+      name: 'gist-api-{{env}}'
+    spec:
+      project: default
+      source:
+        repoURL: 'https://github.com/hemuku90/python-ci-cd.git'
+        targetRevision: main
+        path: deploy/helm/gist-api
+        helm:
+          valueFiles:
+            - 'values.yaml'
+            - 'values-{{env}}.yaml'
+      destination:
+        server: 'https://kubernetes.default.svc'
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

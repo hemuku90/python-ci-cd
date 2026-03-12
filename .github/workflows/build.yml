@@ -11,8 +11,6 @@ on:
   push:
     branches:
       - develop
-      - 'release/*'
-      - main
   workflow_dispatch:
 
 concurrency:
@@ -37,6 +35,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       short_sha: ${{ steps.prep.outputs.short_sha }}
+      image_tag: ${{ steps.prep.outputs.image_tag }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

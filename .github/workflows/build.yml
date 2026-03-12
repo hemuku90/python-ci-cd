@@ -44,6 +44,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          token: ${{ secrets.TOKEN_GITHUB }}
           fetch-depth: 0  # Full history needed to resolve tag metadata
 
       - name: Prepare Metadata
@@ -120,6 +121,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          token: ${{ secrets.TOKEN_GITHUB }}
           ref: main
           fetch-depth: 0  # Full history required for git push
       - name: Update Dev Manifest
@@ -147,6 +149,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          token: ${{ secrets.TOKEN_GITHUB }}
           ref: main
           fetch-depth: 0  # Full history required for git push
       - name: Update QA Manifest
@@ -174,6 +177,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          token: ${{ secrets.TOKEN_GITHUB }}
           ref: main
           fetch-depth: 0  # Full history required for git push
       - name: Update Staging Manifest
@@ -201,6 +205,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
+          token: ${{ secrets.TOKEN_GITHUB }}
           ref: main
           fetch-depth: 0  # Full history required for git push
       - name: Update Prod Manifest

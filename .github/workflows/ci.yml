@@ -89,7 +89,7 @@ jobs:
     name: Dependency Scan
     runs-on: ubuntu-latest
     # Run Dependency scan on production-path branches
-    if: github.base_ref == 'develop'
+    if: github.base_ref == 'develop' || startsWith(github.base_ref, 'release/') || github.base_ref == 'main'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4

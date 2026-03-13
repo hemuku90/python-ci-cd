@@ -75,7 +75,7 @@ jobs:
           push: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          platforms: linux/arm64
+          platforms: linux/amd64,linux/arm64
           tags: |
             ${{ env.IMAGE_REPO }}:sha-${{ github.sha }}
             ${{ env.IMAGE_REPO }}:v${{ steps.version.outputs.version }}

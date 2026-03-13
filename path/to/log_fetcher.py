@@ -1,0 +1,1 @@
+response = requests.get(log_url, allow_redirects=True)

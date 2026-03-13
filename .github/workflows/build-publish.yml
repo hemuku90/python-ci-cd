@@ -6,6 +6,7 @@ on:
       - development
       - "release/*"
       - "hotfix/*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -20,6 +21,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -108,9 +112,12 @@ jobs:
 
       - name: Commit dev promotion
         if: github.ref == 'refs/heads/development'
+        id: promote_dev
+        continue-on-error: true
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin development
           git add deploy/helm/gist-api/values-dev.yaml
           if git diff --cached --quiet; then
             echo "No changes to commit."
@@ -118,3 +125,13 @@ jobs:
           fi
           git commit -m "chore(dev): promote image $IMAGE_TAG"
           git push origin HEAD:development
+
+      - name: Open PR if direct push is blocked
+        if: github.ref == 'refs/heads/development' && steps.promote_dev.outcome == 'failure'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: "bot/dev-promotion-${{ github.run_id }}"
+          title: "chore(dev): promote image ${{ env.IMAGE_TAG }}"
+          commit-message: "chore(dev): promote image ${{ env.IMAGE_TAG }}"
+          body: "Automated promotion of the dev image tag and digest."
+          base: development

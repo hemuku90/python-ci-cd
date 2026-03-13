@@ -105,6 +105,10 @@ jobs:
           COSIGN_EXPERIMENTAL: "1"
         run: cosign sign --yes ${{ env.IMAGE_REPO }}@${{ env.IMAGE_DIGEST }}
 
+      - name: Sync development branch
+        if: github.ref == 'refs/heads/development'
+        run: git pull --rebase origin development
+
       - name: Update dev values
         if: github.ref == 'refs/heads/development'
         uses: mikefarah/yq@v4
@@ -118,7 +122,6 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin development
           git add deploy/helm/gist-api/values-dev.yaml
           if git diff --cached --quiet; then
             echo "No changes to commit."

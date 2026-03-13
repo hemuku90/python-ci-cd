@@ -55,6 +55,9 @@ jobs:
           PY
           cat /tmp/version.txt >> "$GITHUB_OUTPUT"
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -70,6 +73,8 @@ jobs:
         with:
           context: .
           push: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           platforms: linux/arm64
           tags: |
             ${{ env.IMAGE_REPO }}:sha-${{ github.sha }}

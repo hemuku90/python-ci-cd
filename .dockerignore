@@ -26,6 +26,8 @@ htmlcov/
 .nox/
 coverage.xml
 *.cover
+tests/
+.images/
 
 # IDE
 .vscode/

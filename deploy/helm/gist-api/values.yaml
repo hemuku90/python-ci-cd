@@ -5,6 +5,7 @@ image:
   repository: hemant1/gist-api
   pullPolicy: IfNotPresent
   tag: "latest"
+  digest: ""
 
 service:
   type: ClusterIP

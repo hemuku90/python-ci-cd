@@ -1,0 +1,54 @@
+name: rollback
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "Environment to rollback (dev/qa/stage/uat/prod)"
+        required: true
+        default: "prod"
+      image_tag:
+        description: "Previous image tag (example: sha-<commit>)"
+        required: true
+      image_digest:
+        description: "Previous image digest (example: sha256:...)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install yq
+        uses: mikefarah/yq@v4
+
+      - name: Update values
+        run: |
+          ENV_NAME="${{ inputs.env }}"
+          FILE="deploy/helm/gist-api/values-${ENV_NAME}.yaml"
+          if [ ! -f "$FILE" ]; then
+            echo "Values file not found: $FILE"
+            exit 1
+          fi
+          IMAGE_TAG="${{ inputs.image_tag }}"
+          IMAGE_DIGEST="${{ inputs.image_digest }}"
+          yq -i ".image.tag = \"${IMAGE_TAG}\" | .image.digest = \"${IMAGE_DIGEST}\"" "$FILE"
+
+      - name: Commit rollback
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "deploy/helm/gist-api/values-${{ inputs.env }}.yaml"
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(${{ inputs.env }}): rollback to ${{ inputs.image_tag }}"
+          git push origin HEAD:main

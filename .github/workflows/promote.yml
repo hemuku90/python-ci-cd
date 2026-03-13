@@ -1,0 +1,79 @@
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_env:
+        description: "Source environment (dev/qa/stage/uat/prod)"
+        required: true
+        default: "dev"
+      target_env:
+        description: "Target environment (qa/stage/uat/prod)"
+        required: true
+        default: "qa"
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Install yq
+        uses: mikefarah/yq@v4
+
+      - name: Fetch development
+        run: git fetch origin development
+
+      - name: Read source image
+        id: source
+        run: |
+          SOURCE_ENV="${{ inputs.source_env }}"
+          TARGET_ENV="${{ inputs.target_env }}"
+          if [ "$SOURCE_ENV" = "$TARGET_ENV" ]; then
+            echo "source and target env must differ"
+            exit 1
+          fi
+          if [ "$SOURCE_ENV" = "dev" ]; then
+            git show origin/development:deploy/helm/gist-api/values-dev.yaml > /tmp/values-source.yaml
+          else
+            cp "deploy/helm/gist-api/values-${SOURCE_ENV}.yaml" /tmp/values-source.yaml
+          fi
+          IMAGE_TAG="$(yq -r '.image.tag' /tmp/values-source.yaml)"
+          IMAGE_DIGEST="$(yq -r '.image.digest' /tmp/values-source.yaml)"
+          if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then
+            echo "image.tag missing in source values"
+            exit 1
+          fi
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            echo "image.digest missing in source values"
+            exit 1
+          fi
+          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
+          echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
+
+      - name: Update target values
+        run: |
+          TARGET_ENV="${{ inputs.target_env }}"
+          if [ ! -f "deploy/helm/gist-api/values-${TARGET_ENV}.yaml" ]; then
+            echo "Target values file not found."
+            exit 1
+          fi
+          yq -i '.image.tag = strenv(IMAGE_TAG) | .image.digest = strenv(IMAGE_DIGEST)' "deploy/helm/gist-api/values-${TARGET_ENV}.yaml"
+
+      - name: Commit promotion
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "deploy/helm/gist-api/values-${{ inputs.target_env }}.yaml"
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(${{ inputs.target_env }}): promote image ${IMAGE_TAG}"
+          git push origin HEAD:main

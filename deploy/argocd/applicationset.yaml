@@ -9,12 +9,19 @@ spec:
       elements:
         - env: dev
           namespace: gist-api-dev
+          revision: development
         - env: qa
           namespace: gist-api-qa
-        - env: staging
-          namespace: gist-api-staging
+          revision: main
+        - env: stage
+          namespace: gist-api-stage
+          revision: main
+        - env: uat
+          namespace: gist-api-uat
+          revision: main
         - env: prod
           namespace: gist-api-prod
+          revision: main
   template:
     metadata:
       name: 'gist-api-{{env}}'
@@ -22,7 +29,7 @@ spec:
       project: default
       source:
         repoURL: 'git@github.com:hemuku90/python-ci-cd.git'
-        targetRevision: main
+        targetRevision: '{{revision}}'
         path: deploy/helm/gist-api
         helm:
           valueFiles:

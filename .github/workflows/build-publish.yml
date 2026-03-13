@@ -18,6 +18,9 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image_digest: ${{ steps.image_ref.outputs.image_digest }}
+      image_tag: ${{ steps.image_ref.outputs.image_tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -77,9 +80,12 @@ jobs:
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
       - name: Set image ref
+        id: image_ref
         run: |
           echo "IMAGE_DIGEST=${{ steps.build.outputs.digest }}" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=sha-${{ github.sha }}" >> "$GITHUB_ENV"
+          echo "image_digest=${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT"
+          echo "image_tag=sha-${{ github.sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Scan image with Trivy
         uses: aquasecurity/trivy-action@0.24.0
@@ -105,6 +111,21 @@ jobs:
         env:
           COSIGN_EXPERIMENTAL: "1"
         run: cosign sign --yes ${{ env.IMAGE_REPO }}@${{ env.IMAGE_DIGEST }}
+  deploy-dev:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set image env
+        if: github.ref == 'refs/heads/development'
+        run: |
+          echo "IMAGE_DIGEST=${{ needs.build.outputs.image_digest }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${{ needs.build.outputs.image_tag }}" >> "$GITHUB_ENV"
 
       - name: Sync development branch
         if: github.ref == 'refs/heads/development'

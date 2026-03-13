@@ -81,7 +81,7 @@ jobs:
           echo "IMAGE_TAG=sha-${{ github.sha }}" >> "$GITHUB_ENV"
 
       - name: Scan image with Trivy
-        uses: aquasec/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@0.24.0
         with:
           image-ref: ${{ env.IMAGE_REPO }}@${{ env.IMAGE_DIGEST }}
           severity: "CRITICAL,HIGH"

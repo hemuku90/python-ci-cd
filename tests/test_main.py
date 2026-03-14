@@ -9,7 +9,7 @@ from main import app
 @pytest.mark.asyncio
 @pytest.mark.parametrize("username", ["octocat", "hemuku90"])
 async def test_get_user_gists_success(username):
-    """Test successful retrieval of user gists from real GitHub API.
+    """Test successful retrieval of user gists from GitHub API.
 
     Test CI-CD with ArgoCD
     """

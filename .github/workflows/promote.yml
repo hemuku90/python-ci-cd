@@ -26,6 +26,8 @@ jobs:
 
       - name: Install yq
         uses: mikefarah/yq@v4
+        with:
+          cmd: install
 
       - name: Fetch development
         run: git fetch origin development

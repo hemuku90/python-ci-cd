@@ -195,7 +195,7 @@ jobs:
 
   deploy-uat:
     runs-on: ubuntu-latest
-    needs: deploy-stage
+    needs: [deploy-stage, deploy-qa]
     environment: uat
     steps:
       - name: Checkout main

@@ -1,20 +1,11 @@
-name: promote
+name: promote-release
 
 on:
   workflow_dispatch:
     inputs:
-      source_env:
-        description: "Source environment (dev/qa/stage/uat/prod)"
-        required: true
-        default: "dev"
-      target_env:
-        description: "Target environment (qa/stage/uat/prod)"
-        required: true
-        default: "qa"
       source_ref:
-        description: "Release branch for stage/uat/prod only (leave empty for dev->qa)"
-        required: false
-        default: ""
+        description: "Release branch to promote (example: release/1.2.3 or release/v1.2.3)"
+        required: true
 
 permissions:
   contents: write
@@ -22,115 +13,61 @@ permissions:
 jobs:
   promote:
     runs-on: ubuntu-latest
-    environment: ${{ inputs.target_env }}
     steps:
-      - name: Checkout main
+      - name: Checkout release branch
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
 
       - name: Install yq
         run: |
           sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
           sudo chmod +x /usr/local/bin/yq
           yq --version
-  
-      - name: Fetch development
-        run: git fetch origin development
 
-      - name: Read source image
-        id: source
+      - name: Validate release version
         run: |
-          SOURCE_ENV="${{ inputs.source_env }}"
-          TARGET_ENV="${{ inputs.target_env }}"
           SOURCE_REF="${{ inputs.source_ref }}"
-          if [ "$SOURCE_ENV" = "$TARGET_ENV" ]; then
-            echo "source and target env must differ"
+          RELEASE_VERSION="${SOURCE_REF#release/}"
+          RELEASE_VERSION="${RELEASE_VERSION#v}"
+          PYPROJECT_VERSION="$(python -c "import pathlib,re; text=pathlib.Path('pyproject.toml').read_text(); m=re.search(r'(?m)^version = \\\"([^\\\"]+)\\\"', text); print(m.group(1) if m else '')")"
+          if [ -z "$PYPROJECT_VERSION" ]; then
+            echo "Version not found in pyproject.toml"
             exit 1
           fi
-          if [ "$TARGET_ENV" = "qa" ] && [ -n "$SOURCE_REF" ]; then
-            echo "Ignoring source_ref for qa promotions."
-            SOURCE_REF=""
+          PYPROJECT_VERSION="${PYPROJECT_VERSION#v}"
+          if [ "$RELEASE_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "Release branch version (${RELEASE_VERSION}) must match pyproject.toml version (${PYPROJECT_VERSION})."
+            exit 1
           fi
-          case "$TARGET_ENV" in
-            stage|uat|prod)
-              if [ "$SOURCE_ENV" != "qa" ]; then
-                echo "For stage/uat/prod, source_env must be qa."
-                exit 1
-              fi
-              if [ -z "$SOURCE_REF" ]; then
-                echo "source_ref is required for stage/uat/prod (release/*)."
-                exit 1
-              fi
-              if ! echo "$SOURCE_REF" | grep -Eq '^release/'; then
-                echo "source_ref must be a release/* branch."
-                exit 1
-              fi
-              git fetch origin "$SOURCE_REF"
-              git show "origin/$SOURCE_REF:deploy/helm/gist-api/values-qa.yaml" > /tmp/values-source.yaml
-              git show "origin/$SOURCE_REF:pyproject.toml" > /tmp/pyproject.toml
-              RELEASE_VERSION="${SOURCE_REF#release/}"
-              PYPROJECT_VERSION="$(python -c "import pathlib,re; text=pathlib.Path('/tmp/pyproject.toml').read_text(); m=re.search(r'(?m)^version = \\\"([^\\\"]+)\\\"', text); print(m.group(1) if m else '')")"
-              if [ -z "$PYPROJECT_VERSION" ]; then
-                echo "Version not found in pyproject.toml"
-                exit 1
-              fi
-              if [ "$RELEASE_VERSION" != "$PYPROJECT_VERSION" ]; then
-                echo "Release branch version (${RELEASE_VERSION}) must match pyproject.toml version (${PYPROJECT_VERSION})."
-                exit 1
-              fi
-              ;;
-            qa)
-              if [ "$SOURCE_ENV" != "dev" ]; then
-                echo "For qa, source_env must be dev."
-                exit 1
-              fi
-              git show origin/development:deploy/helm/gist-api/values-dev.yaml > /tmp/values-source.yaml
-              ;;
-            *)
-              if [ "$SOURCE_ENV" = "dev" ]; then
-                git show origin/development:deploy/helm/gist-api/values-dev.yaml > /tmp/values-source.yaml
-              else
-                cp "deploy/helm/gist-api/values-${SOURCE_ENV}.yaml" /tmp/values-source.yaml
-              fi
-              ;;
-          esac
-          IMAGE_TAG="$(yq -r '.image.tag' /tmp/values-source.yaml)"
-          IMAGE_DIGEST="$(yq -r '.image.digest' /tmp/values-source.yaml)"
-          if [ "$TARGET_ENV" = "stage" ] || [ "$TARGET_ENV" = "uat" ] || [ "$TARGET_ENV" = "prod" ]; then
-            if [ "v${PYPROJECT_VERSION}" != "$IMAGE_TAG" ]; then
-              echo "image.tag must match v${PYPROJECT_VERSION} for release promotions."
-              exit 1
-            fi
-          fi
+
+      - name: Sync release branch
+        run: git pull --rebase origin "${{ inputs.source_ref }}"
+
+      - name: Promote QA to Stage and UAT
+        run: |
+          IMAGE_TAG="$(yq -r '.image.tag' deploy/helm/gist-api/values-qa.yaml)"
+          IMAGE_DIGEST="$(yq -r '.image.digest' deploy/helm/gist-api/values-qa.yaml)"
           if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then
-            echo "image.tag missing in source values"
+            echo "image.tag missing in values-qa.yaml"
             exit 1
           fi
           if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
-            echo "image.digest missing in source values"
+            echo "image.digest missing in values-qa.yaml"
             exit 1
           fi
-          echo "IMAGE_TAG=$IMAGE_TAG" >> "$GITHUB_ENV"
-          echo "IMAGE_DIGEST=$IMAGE_DIGEST" >> "$GITHUB_ENV"
+          yq -i ".image.tag = \"${IMAGE_TAG}\" | .image.digest = \"${IMAGE_DIGEST}\"" deploy/helm/gist-api/values-stage.yaml
+          yq -i ".image.tag = \"${IMAGE_TAG}\" | .image.digest = \"${IMAGE_DIGEST}\"" deploy/helm/gist-api/values-uat.yaml
 
-      - name: Update target values
-        run: |
-          TARGET_ENV="${{ inputs.target_env }}"
-          if [ ! -f "deploy/helm/gist-api/values-${TARGET_ENV}.yaml" ]; then
-            echo "Target values file not found."
-            exit 1
-          fi
-          yq -i '.image.tag = strenv(IMAGE_TAG) | .image.digest = strenv(IMAGE_DIGEST)' "deploy/helm/gist-api/values-${TARGET_ENV}.yaml"
-
-      - name: Commit promotion
+      - name: Commit release promotion
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "deploy/helm/gist-api/values-${{ inputs.target_env }}.yaml"
+          git add deploy/helm/gist-api/values-stage.yaml deploy/helm/gist-api/values-uat.yaml
           if git diff --cached --quiet; then
             echo "No changes to commit."
             exit 0
           fi
-          git commit -m "chore(${{ inputs.target_env }}): promote image ${IMAGE_TAG}"
-          git push origin HEAD:main
+          git commit -m "chore(release): promote qa to stage/uat"
+          git push origin HEAD:"${{ inputs.source_ref }}"

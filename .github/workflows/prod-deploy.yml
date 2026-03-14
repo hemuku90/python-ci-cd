@@ -1,0 +1,67 @@
+name: prod-deploy
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+jobs:
+  deploy-prod:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Sync main
+        run: git pull --rebase origin main
+
+      - name: Update prod values from uat
+        run: |
+          IMAGE_TAG="$(yq -r '.image.tag' deploy/helm/gist-api/values-uat.yaml)"
+          IMAGE_DIGEST="$(yq -r '.image.digest' deploy/helm/gist-api/values-uat.yaml)"
+          if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then
+            echo "image.tag missing in values-uat.yaml"
+            exit 1
+          fi
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            echo "image.digest missing in values-uat.yaml"
+            exit 1
+          fi
+          yq -i ".image.tag = \"${IMAGE_TAG}\" | .image.digest = \"${IMAGE_DIGEST}\"" deploy/helm/gist-api/values-prod.yaml
+
+      - name: Commit prod promotion
+        id: promote_prod
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/helm/gist-api/values-prod.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(prod): promote uat to prod"
+          git push origin HEAD:main
+
+      - name: Open PR if direct push is blocked
+        if: steps.promote_prod.outcome == 'failure'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: "bot/prod-promotion-${{ github.run_id }}"
+          title: "chore(prod): promote uat to prod"
+          commit-message: "chore(prod): promote uat to prod"
+          body: "Automated promotion of the UAT image tag and digest to prod."
+          base: main

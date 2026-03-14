@@ -212,7 +212,17 @@ jobs:
 
       - name: Update uat values
         run: |
-          yq -i ".image.tag = \"${{ needs.deploy-qa.outputs.image_tag }}\" | .image.digest = \"${{ needs.deploy-qa.outputs.image_digest }}\"" deploy/helm/gist-api/values-uat.yaml
+          IMAGE_TAG="$(yq -r '.image.tag' deploy/helm/gist-api/values-stage.yaml)"
+          IMAGE_DIGEST="$(yq -r '.image.digest' deploy/helm/gist-api/values-stage.yaml)"
+          if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then
+            echo "image.tag missing in values-stage.yaml"
+            exit 1
+          fi
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            echo "image.digest missing in values-stage.yaml"
+            exit 1
+          fi
+          yq -i ".image.tag = \"${IMAGE_TAG}\" | .image.digest = \"${IMAGE_DIGEST}\"" deploy/helm/gist-api/values-uat.yaml
 
       - name: Commit uat promotion
         id: promote_uat
@@ -225,7 +235,7 @@ jobs:
             echo "No changes to commit."
             exit 0
           fi
-          git commit -m "chore(uat): promote release ${{ needs.deploy-qa.outputs.image_tag }}"
+          git commit -m "chore(uat): promote release"
           git push origin HEAD:main
 
       - name: Open PR if direct push is blocked

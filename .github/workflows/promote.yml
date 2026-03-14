@@ -11,6 +11,10 @@ on:
         description: "Target environment (qa/stage/uat/prod)"
         required: true
         default: "qa"
+      source_ref:
+        description: "Release branch for stage/uat/prod (example: release/1.2.0)"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -37,15 +41,43 @@ jobs:
         run: |
           SOURCE_ENV="${{ inputs.source_env }}"
           TARGET_ENV="${{ inputs.target_env }}"
+          SOURCE_REF="${{ inputs.source_ref }}"
           if [ "$SOURCE_ENV" = "$TARGET_ENV" ]; then
             echo "source and target env must differ"
             exit 1
           fi
-          if [ "$SOURCE_ENV" = "dev" ]; then
-            git show origin/development:deploy/helm/gist-api/values-dev.yaml > /tmp/values-source.yaml
-          else
-            cp "deploy/helm/gist-api/values-${SOURCE_ENV}.yaml" /tmp/values-source.yaml
-          fi
+          case "$TARGET_ENV" in
+            stage|uat|prod)
+              if [ "$SOURCE_ENV" != "qa" ]; then
+                echo "For stage/uat/prod, source_env must be qa."
+                exit 1
+              fi
+              if [ -z "$SOURCE_REF" ]; then
+                echo "source_ref is required for stage/uat/prod (release/*)."
+                exit 1
+              fi
+              if ! echo "$SOURCE_REF" | grep -Eq '^release/'; then
+                echo "source_ref must be a release/* branch."
+                exit 1
+              fi
+              git fetch origin "$SOURCE_REF"
+              git show "origin/$SOURCE_REF:deploy/helm/gist-api/values-qa.yaml" > /tmp/values-source.yaml
+              ;;
+            qa)
+              if [ "$SOURCE_ENV" != "dev" ]; then
+                echo "For qa, source_env must be dev."
+                exit 1
+              fi
+              git show origin/development:deploy/helm/gist-api/values-dev.yaml > /tmp/values-source.yaml
+              ;;
+            *)
+              if [ "$SOURCE_ENV" = "dev" ]; then
+                git show origin/development:deploy/helm/gist-api/values-dev.yaml > /tmp/values-source.yaml
+              else
+                cp "deploy/helm/gist-api/values-${SOURCE_ENV}.yaml" /tmp/values-source.yaml
+              fi
+              ;;
+          esac
           IMAGE_TAG="$(yq -r '.image.tag' /tmp/values-source.yaml)"
           IMAGE_DIGEST="$(yq -r '.image.digest' /tmp/values-source.yaml)"
           if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then

@@ -42,15 +42,11 @@ jobs:
           git show "origin/$SOURCE_REF:deploy/helm/gist-api/values-qa.yaml" > /tmp/values-source.yaml
           git show "origin/$SOURCE_REF:pyproject.toml" > /tmp/pyproject.toml
           RELEASE_VERSION="${SOURCE_REF#release/}"
-          PYPROJECT_VERSION="$(python - <<'PY'
-          import pathlib, re
-          text = pathlib.Path("/tmp/pyproject.toml").read_text()
-          match = re.search(r'(?m)^version = \"([^\"]+)\"', text)
-          if not match:
-              raise SystemExit("Version not found in pyproject.toml")
-          print(match.group(1))
-          PY
-          )"
+          PYPROJECT_VERSION="$(python -c "import pathlib,re; text=pathlib.Path('/tmp/pyproject.toml').read_text(); m=re.search(r'(?m)^version = \\\"([^\\\"]+)\\\"', text); print(m.group(1) if m else '')")"
+          if [ -z "$PYPROJECT_VERSION" ]; then
+            echo "Version not found in pyproject.toml"
+            exit 1
+          fi
           if [ "$RELEASE_VERSION" != "$PYPROJECT_VERSION" ]; then
             echo "Release branch version (${RELEASE_VERSION}) must match pyproject.toml version (${PYPROJECT_VERSION})."
             exit 1

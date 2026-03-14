@@ -74,6 +74,8 @@ graph TB
 
 ## 2. Branching Strategy: GitLab Flow Style
 
+Note: This repository uses `development` as the integration branch (instead of `develop`).
+
 | Branch | Purpose | Protection Rules | Deployment |
 | :--- | :--- | :--- | :--- |
 | `feature/*` | Developer feature branches | PR to develop, 1 approval | None |

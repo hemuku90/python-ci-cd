@@ -17,7 +17,7 @@ router = APIRouter()
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check() -> Dict[str, str]:
-    """Health check endpoint for container orchestration."""
+    """Health check endpoint for container orchestration /health"""
     return {"status": "healthy"}
 
 

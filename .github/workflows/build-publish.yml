@@ -21,6 +21,7 @@ jobs:
     outputs:
       image_digest: ${{ steps.image_ref.outputs.image_digest }}
       image_tag: ${{ steps.image_ref.outputs.image_tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -54,6 +55,15 @@ jobs:
           print(f"version={match.group(1)}")
           PY
           cat /tmp/version.txt >> "$GITHUB_OUTPUT"
+
+      - name: Validate release branch version
+        if: startsWith(github.ref, 'refs/heads/release/')
+        run: |
+          BRANCH_VERSION="${GITHUB_REF#refs/heads/release/}"
+          if [ "${BRANCH_VERSION}" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Release branch version (${BRANCH_VERSION}) must match pyproject.toml version (${{ steps.version.outputs.version }})."
+            exit 1
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3

@@ -177,3 +177,42 @@ jobs:
           commit-message: "chore(dev): promote image ${{ env.IMAGE_TAG }}"
           body: "Automated promotion of the dev image tag and digest."
           base: development
+
+  deploy-qa:
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/heads/release/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set image env
+        run: |
+          echo "IMAGE_DIGEST=${{ needs.build.outputs.image_digest }}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=v${{ needs.build.outputs.version }}" >> "$GITHUB_ENV"
+
+      - name: Sync release branch
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          git pull --rebase origin "$BRANCH_NAME"
+
+      - name: Update qa values
+        uses: mikefarah/yq@v4
+        with:
+          cmd: yq -i '.image.tag = strenv(IMAGE_TAG) | .image.digest = strenv(IMAGE_DIGEST)' deploy/helm/gist-api/values-qa.yaml
+
+      - name: Commit qa promotion
+        run: |
+          BRANCH_NAME="${GITHUB_REF#refs/heads/}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/helm/gist-api/values-qa.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(qa): promote image $IMAGE_TAG"
+          git push origin HEAD:"$BRANCH_NAME"

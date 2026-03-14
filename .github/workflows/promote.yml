@@ -12,7 +12,7 @@ on:
         required: true
         default: "qa"
       source_ref:
-        description: "Release branch for stage/uat/prod (example: release/1.2.0)"
+        description: "Release branch for stage/uat/prod only (leave empty for dev->qa)"
         required: false
         default: ""
 
@@ -47,6 +47,10 @@ jobs:
           if [ "$SOURCE_ENV" = "$TARGET_ENV" ]; then
             echo "source and target env must differ"
             exit 1
+          fi
+          if [ "$TARGET_ENV" = "qa" ] && [ -n "$SOURCE_REF" ]; then
+            echo "Ignoring source_ref for qa promotions."
+            SOURCE_REF=""
           fi
           case "$TARGET_ENV" in
             stage|uat|prod)

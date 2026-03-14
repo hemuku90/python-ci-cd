@@ -32,7 +32,7 @@ async def test_get_user_gists_success(username):
 
 @pytest.mark.asyncio
 async def test_health_endpoint():
-    """Test health check endpoint returns healthy status /health endpoint"""
+    """Test health check endpoint returns healthy status /health"""
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
     ) as client:

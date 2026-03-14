@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "gist-api"
-version = "1.1.0"
+version = "v1.1.0"
 description = "FastAPI service to retrieve publicly available GitHub Gists for a user using pagination support"
 readme = "README.md"
 license = {text = "MIT"}

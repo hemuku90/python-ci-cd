@@ -22,6 +22,7 @@ permissions:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    environment: ${{ inputs.target_env }}
     steps:
       - name: Checkout main
         uses: actions/checkout@v4
@@ -29,10 +30,11 @@ jobs:
           ref: main
 
       - name: Install yq
-        uses: mikefarah/yq@v4
-        with:
-          cmd: install
-
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+  
       - name: Fetch development
         run: git fetch origin development
 
@@ -62,6 +64,21 @@ jobs:
               fi
               git fetch origin "$SOURCE_REF"
               git show "origin/$SOURCE_REF:deploy/helm/gist-api/values-qa.yaml" > /tmp/values-source.yaml
+              git show "origin/$SOURCE_REF:pyproject.toml" > /tmp/pyproject.toml
+              RELEASE_VERSION="${SOURCE_REF#release/}"
+              PYPROJECT_VERSION="$(python - <<'PY'
+              import pathlib, re
+              text = pathlib.Path("/tmp/pyproject.toml").read_text()
+              match = re.search(r'(?m)^version = \"([^\"]+)\"', text)
+              if not match:
+                  raise SystemExit("Version not found in pyproject.toml")
+              print(match.group(1))
+              PY
+              )"
+              if [ "$RELEASE_VERSION" != "$PYPROJECT_VERSION" ]; then
+                echo "Release branch version (${RELEASE_VERSION}) must match pyproject.toml version (${PYPROJECT_VERSION})."
+                exit 1
+              fi
               ;;
             qa)
               if [ "$SOURCE_ENV" != "dev" ]; then
@@ -80,6 +97,12 @@ jobs:
           esac
           IMAGE_TAG="$(yq -r '.image.tag' /tmp/values-source.yaml)"
           IMAGE_DIGEST="$(yq -r '.image.digest' /tmp/values-source.yaml)"
+          if [ "$TARGET_ENV" = "stage" ] || [ "$TARGET_ENV" = "uat" ] || [ "$TARGET_ENV" = "prod" ]; then
+            if [ "v${PYPROJECT_VERSION}" != "$IMAGE_TAG" ]; then
+              echo "image.tag must match v${PYPROJECT_VERSION} for release promotions."
+              exit 1
+            fi
+          fi
           if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then
             echo "image.tag missing in source values"
             exit 1

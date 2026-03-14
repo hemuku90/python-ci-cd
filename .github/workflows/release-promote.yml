@@ -1,0 +1,173 @@
+name: release-promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Release branch to promote from (example: release/1.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.read.outputs.image_tag }}
+      image_digest: ${{ steps.read.outputs.image_digest }}
+      version: ${{ steps.read.outputs.version }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Read release source
+        id: read
+        run: |
+          SOURCE_REF="${{ inputs.source_ref }}"
+          if ! echo "$SOURCE_REF" | grep -Eq '^release/'; then
+            echo "source_ref must be a release/* branch."
+            exit 1
+          fi
+          git fetch origin "$SOURCE_REF"
+          git show "origin/$SOURCE_REF:deploy/helm/gist-api/values-qa.yaml" > /tmp/values-source.yaml
+          git show "origin/$SOURCE_REF:pyproject.toml" > /tmp/pyproject.toml
+          RELEASE_VERSION="${SOURCE_REF#release/}"
+          PYPROJECT_VERSION="$(python - <<'PY'
+          import pathlib, re
+          text = pathlib.Path("/tmp/pyproject.toml").read_text()
+          match = re.search(r'(?m)^version = \"([^\"]+)\"', text)
+          if not match:
+              raise SystemExit("Version not found in pyproject.toml")
+          print(match.group(1))
+          PY
+          )"
+          if [ "$RELEASE_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "Release branch version (${RELEASE_VERSION}) must match pyproject.toml version (${PYPROJECT_VERSION})."
+            exit 1
+          fi
+          IMAGE_TAG="$(yq -r '.image.tag' /tmp/values-source.yaml)"
+          IMAGE_DIGEST="$(yq -r '.image.digest' /tmp/values-source.yaml)"
+          if [ -z "$IMAGE_TAG" ] || [ "$IMAGE_TAG" = "null" ]; then
+            echo "image.tag missing in source values"
+            exit 1
+          fi
+          if [ -z "$IMAGE_DIGEST" ] || [ "$IMAGE_DIGEST" = "null" ]; then
+            echo "image.digest missing in source values"
+            exit 1
+          fi
+          if [ "v${PYPROJECT_VERSION}" != "$IMAGE_TAG" ]; then
+            echo "image.tag must match v${PYPROJECT_VERSION} for release promotions."
+            exit 1
+          fi
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+          echo "image_digest=$IMAGE_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "version=$PYPROJECT_VERSION" >> "$GITHUB_OUTPUT"
+
+  promote-stage:
+    runs-on: ubuntu-latest
+    needs: prepare
+    environment: stage
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Update stage values
+        run: |
+          yq -i '.image.tag = "${{ needs.prepare.outputs.image_tag }}" | .image.digest = "${{ needs.prepare.outputs.image_digest }}"' deploy/helm/gist-api/values-stage.yaml
+
+      - name: Commit stage promotion
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/helm/gist-api/values-stage.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(stage): promote image ${{ needs.prepare.outputs.image_tag }}"
+          git push origin HEAD:main
+
+  promote-uat:
+    runs-on: ubuntu-latest
+    needs: promote-stage
+    environment: uat
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Update uat values
+        run: |
+          yq -i '.image.tag = "${{ needs.prepare.outputs.image_tag }}" | .image.digest = "${{ needs.prepare.outputs.image_digest }}"' deploy/helm/gist-api/values-uat.yaml
+
+      - name: Commit uat promotion
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/helm/gist-api/values-uat.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(uat): promote image ${{ needs.prepare.outputs.image_tag }}"
+          git push origin HEAD:main
+
+  promote-prod:
+    runs-on: ubuntu-latest
+    needs: promote-uat
+    environment: prod
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Install yq
+        run: |
+          sudo curl -sSL -o /usr/local/bin/yq https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+
+      - name: Update prod values
+        run: |
+          yq -i '.image.tag = "${{ needs.prepare.outputs.image_tag }}" | .image.digest = "${{ needs.prepare.outputs.image_digest }}"' deploy/helm/gist-api/values-prod.yaml
+
+      - name: Commit prod promotion
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add deploy/helm/gist-api/values-prod.yaml
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(prod): promote image ${{ needs.prepare.outputs.image_tag }}"
+          git push origin HEAD:main
